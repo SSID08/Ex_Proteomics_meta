@@ -1,0 +1,525 @@
+---
+title: "Hostrup_2021_Proteomics_analysis_with_limma"
+author: "Siddharth"
+date: '2022-05-30'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+```{r}
+#rm(list=ls())
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(readxl)
+library(dplyr)
+library(impute)
+library(vsn)
+library(limma)
+library(ggplot2)
+library(ggfortify)
+library(DEqMS)
+library(ComplexHeatmap)
+```
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+# proteome_annot_prot= read_excel("Human.MitoCarta3.0.xls", 
+#                            sheet = "A Human MitoCarta3.0")
+# proteome_annot_prot=proteome_annot_prot$UniProt
+```
+
+```{r}
+# data <- data.frame(read_excel("Table_S1.xlsx"))
+# data=data[,-c(20,21,22)]
+# #data$ProteinAccessions=strsplit(data$ProteinAccessions,";")
+# # prot_ids=data$ProteinAccessions
+# # for(i in 1:length(prot_ids)){
+# #   replacement=as.list(unlist(prot_ids[i]))
+# #   replacement=replacement[replacement %in% proteome_annot_prot]
+# #   if (length(replacement)==0){prot_ids[i]=NA}else{prot_ids[i]=replacement}
+# # }
+# #data$ProteinAccessions=prot_ids
+# #data=data%>%filter(is.na(`ProteinAccessions`)!=TRUE)
+# data[,c(4:19)]=apply(data[,c(4:19)],as.numeric,MARGIN = 2)
+```
+
+```{r}
+data=readxl::read_excel("../Proteomics with DeQMS/Hostrup_Protein_Quant.xlsx")
+```
+
+```{r}
+Mito_Gene_to_UniProt=readxl::read_xlsx("Proteomics with DeQMS/Gene_to_Uniprot.xlsx")
+Mito_Gene_to_UniProt=Mito_Gene_to_UniProt%>%dplyr::rename("Uniprot"="Entry","Gene"="From")
+```
+
+
+```{r}
+data=data%>%select(PG.ProteinAccessions,contains("NrOfPrecursorsUsedForQuantification"),contains("MS2Quantity"))
+data=data%>%mutate_at(vars(contains("MS2Quantity")),~ifelse(.x=="Filtered",NA,.x))
+data=data%>%mutate_at(vars(contains("NrOfPrecursorsUsedForQuantification")),~ifelse(.x=="Filtered",0,.x))
+data=data%>%mutate_at(vars(-PG.ProteinAccessions),as.numeric)
+data=data%>%filter(rowMeans(is.na(data%>%select(contains("MS2"))))<=0.35)
+```
+
+```{r}
+data$id=as.character(c(1:nrow(data)))
+data=data.frame(data)
+rownames(data)=data$id
+```
+
+```{r}
+data$peptide_count=rowMin(as.matrix(data%>%select(contains("Precursors"))))
+data$peptide_count=data$peptide_count+1
+```
+
+```{r}
+mito_data=data.frame(data%>%separate_rows(PG.ProteinAccessions,sep=";")%>%filter(PG.ProteinAccessions %in% Mito_Gene_to_UniProt$Uniprot))
+mito_data=mito_data%>%distinct(id,.keep_all = T)%>%select(id,PG.ProteinAccessions,contains("MS2"),peptide_count)
+rownames(mito_data)=mito_data$id
+mito_intensities=mito_data%>%select(contains("MS2"))
+```
+
+```{r}
+whole_intensities=data%>%select(id,contains("MS2"))
+whole_intensities[,c(2:17)]=impute.knn(as.matrix(whole_intensities[,c(2:17)]),k=2)$data
+whole_intensities_vsn=whole_intensities
+whole_intensities_vsn[,c(2:17)]=normalizeVSN(whole_intensities_vsn[,c(2:17)])
+whole_intensities_vsn=data.frame(whole_intensities_vsn)
+rownames(whole_intensities_vsn)=whole_intensities_vsn$id
+```
+
+```{r}
+unnorm_mito=whole_intensities_vsn[rownames(mito_intensities),]
+unnorm_mito_long=unnorm_mito%>%gather("Sample","Intensity",-id)
+unnorm_mito_long=unnorm_mito_long%>%group_by(id)%>%mutate(z_intensity=scale(Intensity))%>%ungroup()
+unnorm_mito_zscored=data.frame(unnorm_mito_long%>%pivot_wider(names_from = Sample,values_from = z_intensity,id_cols = id))
+rownames(unnorm_mito_zscored)=unnorm_mito_zscored$id
+rownames(unnorm_mito_zscored)=mito_data[rownames(unnorm_mito_zscored),"PG.ProteinAccessions"]
+unnorm_mito_zscored=unnorm_mito_zscored%>%select(contains("Pre"),contains("Post"))
+```
+
+
+```{r}
+mito_intensities_sum=colSums(mito_intensities,na.rm = T)
+whole_intensities_sum=colSums(whole_intensities,na.rm = T)
+intensities_df=data.frame(mito_intensities_sum,whole_intensities_sum)
+intensities_df[,c(1:2)]=intensities_df[,c(1:2)]/10**4
+intensities_df$MPE=(intensities_df$mito_intensities_sum/intensities_df$whole_intensities_sum)*100
+intensities_df$label=c(rep("Post",8),rep("Pre",8))
+intensities_df$pair=c(c(1:8),c(1:8))
+```
+
+```{r}
+mito_intensities_plot=ggplot(intensities_df,mapping = aes(x=factor(label,levels = c("Pre","Post")),y=mito_intensities_sum))+geom_point(color="red",alpha=0.7,size=3)+geom_line(aes(group = pair))
+```
+
+```{r}
+MPE_plot=ggplot()+geom_bar(mapping=aes(factor(c("Pre","Post"),levels=c("Pre","Post")),c(16.64168,17.64641)),stat = "identity",fill="#fed8b1")+geom_point(intensities_df,mapping = aes(x=factor(label,levels = c("Pre","Post")),y=MPE),color="red",alpha=1,size=2)+ylab("MPE(%-age of mito intensity)")+xlab("Training status")+geom_line(data=intensities_df,aes(x=factor(label,levels=c("Pre","Post")),y=MPE,group = pair))
+```
+
+```{r}
+whole_intensities_plot=ggplot()+geom_point(intensities_df,mapping = aes(x=factor(label,levels = c("Pre","Post")),y=whole_intensities_sum),color="black",alpha=0.7,size=0.5)
+```
+
+
+```{r}
+plot(mito_intensities_plot)
+plot(MPE_plot)
+```
+
+
+```{r}
+#mito_intensities=left_join(mito_intensities,Mito_Gene_to_UniProt[,c(2,1)],by = c("PG.ProteinAccessions"="Uniprot"))
+```
+
+
+```{r}
+mito_intensities=impute.knn(as.matrix(mito_intensities),k=2)$data
+mito_intensities=data.frame(mito_intensities)
+mito_intensities_vsn=data.frame(normalizeVSN(mito_intensities))
+#mito_intensities_sep_vsn=data.frame(cbind(normalizeVSN(mito_intensities%>%select(contains("Post"))),normalizeVSN(mito_intensities%>%select(contains("Pre")))))
+mito_intensities_log=data.frame(log2(mito_intensities))
+```
+
+```{r}
+mito_intensities_vsn=mito_intensities_vsn%>%rownames_to_column("id")
+mito_intensities_vsn_longer=mito_intensities_vsn%>%gather("Sample","Intensity",-id)
+mito_intensities_vsn_longer=mito_intensities_vsn_longer%>%group_by(id)%>%mutate(z_intensity=scale(Intensity))
+mito_intensities_vsn_longer=mito_intensities_vsn_longer%>%ungroup()
+mito_intensities_vsn_zscored=data.frame(mito_intensities_vsn_longer%>%pivot_wider(names_from = Sample,values_from = z_intensity,id_cols = id))
+rownames(mito_intensities_vsn_zscored)=mito_intensities_vsn_zscored$id
+mito_intensities_vsn_zscored=mito_intensities_vsn_zscored%>%select(-id)
+rownames(mito_intensities_vsn_zscored)=mito_data$PG.ProteinAccessions
+mito_intensities_vsn_zscored=mito_intensities_vsn_zscored%>%select(contains("Pre"),contains("Post"))
+```
+
+
+```{r}
+col_labels=base::structure(c(paste0("Pre",as.character(c(1:8))),paste0("Post",as.character(c(1:8)))),names=colnames(mito_intensities_vsn_zscored))
+```
+
+
+```{r}
+structure <- dist(mito_intensities_vsn_zscored, method = "euclidean")
+hc <- hclust(structure, method = "average")
+dend <- as.dendrogram(hc)
+mito_hc = color_branches(dend, k = 3)
+
+my_cols=c("Pre"="light yellow","Post"="light green")
+
+normalized_mito_Heatmap=Heatmap(as.matrix(mito_intensities_vsn_zscored),cluster_rows = mito_hc,column_order = colnames(mito_intensities_vsn_zscored),show_row_names = F,split=3,column_labels = col_labels,top_annotation = columnAnnotation(foo=anno_block(align_to = list(Pre=1:8,Post=9:16),panel_fun = function(index, nm) {
+		grid.rect(gp = gpar(fill = my_cols[nm]))
+		grid.text(nm, 0.5, 0.5)
+	},
+	width = unit(2, "cm"))
+))
+```
+
+```{r}
+structure <- dist(unnorm_mito_zscored, method = "euclidean")
+hc <- hclust(structure, method = "average")
+dend <- as.dendrogram(hc)
+mito_hc = color_branches(dend, k = 3)
+
+my_cols=c("Pre"="light yellow","Post"="light green")
+
+unnormalized_mito_Heatmap=Heatmap(as.matrix(unnorm_mito_zscored),cluster_rows = mito_hc,column_order = colnames(unnorm_mito_zscored),show_row_names = F,split=3,column_labels = col_labels,top_annotation = columnAnnotation(foo=anno_block(align_to = list(Pre=1:8,Post=9:16),panel_fun = function(index, nm) {
+		grid.rect(gp = gpar(fill = my_cols[nm]))
+		grid.text(nm, 0.5, 0.5)
+	},
+	width = unit(2, "cm"))
+))
+```
+
+
+```{r}
+hist(as.matrix(mito_intensities_log[,c(1:16)]))
+hist(as.matrix(mito_intensities_vsn[,c(1:16)]))
+qqnorm(unlist(as.matrix(mito_intensities_log)))
+qqline(unlist(as.matrix(mito_intensities_vsn[,c(9:16)])))
+```
+
+```{r}
+mito_intensities_longer=mito_intensities%>%gather("Intensities")
+mito_intensities_longer=mito_intensities_longer%>%mutate(Group=ifelse(grepl("Pre",Intensities),"Pre","Post"))
+mito_intensities_longer[,"value"]=mito_intensities_longer[,"value"]/1000
+```
+
+```{r}
+mito_histogram=ggplot(mito_intensities_longer,aes(x=value,fill=Group,colour=Group))+geom_histogram(alpha=0.5,position = "identity",binwidth =400)+xlim(0,8000)+ylim(0,800)
+mito_histogram=mito_histogram+xlab("Intensity scaled by 1000")
+plot(mito_histogram)
+ggsave("Deshmukh_2021_mito_histogram",mito_histogram,device = "png",width = 5,height = 5,units = "in",dpi=600)
+```
+
+
+```{r}
+meanSdPlot(as.matrix(mito_intensities_log[,c(1:16)]))
+meanSdPlot(as.matrix(mito_intensities_vsn[,c(1:16)]))
+```
+
+
+```{r}
+# mito_intensities_log$p.val=apply(mito_intensities_log,1,function(x){t.test(x[1:8],x[9:16],paired=T,var.equal=F,)$p.value})
+# adj.p_log=p.adjust(mito_intensities_log$p.val, method = "fdr", n = length(mito_intensities_log$p.val))
+# adj.p_vsn=p.adjust(mito_intensities_vsn$p.val,method = "fdr",n=length(mito_intensities_vsn$p.val))
+# length(adj.p_log[adj.p_log<=0.05])
+```   
+
+
+
+```{r}
+# whole_intensities=data.frame(whole_intensities)
+# whole_intensities_vsn=data.frame(normalizeVSN(whole_intensities))
+# whole_intensities_sep_vsn=data.frame(cbind(normalizeVSN(whole_intensities%>%select(contains("Post"))),normalizeVSN(whole_intensities%>%select(contains("Pre")))))
+```
+
+
+```{r}
+# unnorm_mito_intensities=data.frame(whole_intensities_vsn%>%separate_rows(PG.ProteinAccessions,sep=";")%>%filter(PG.ProteinAccessions %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(id,.keep_all = T)%>%select(id,PG.ProteinAccessions,contains("MS2Quantity")))
+# rownames(unnorm_mito_intensities)=unnorm_mito_intensities$id
+#unnorm_mito_intensities=unnorm_mito_intensities%>%select(-id)
+```
+
+
+<!-- ```{r} -->
+<!-- log_data=data.frame(log2(as.matrix(data))) -->
+<!-- vsn_dat=data.frame(justvsn(as.matrix(data))) -->
+<!-- #data[,pre]=vsnMatrix(as.matrix(data[,pre]),returnData = T)@hx -->
+<!-- #data[,post]=vsnMatrix(as.matrix(data[,post]),returnData = T)@hx -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- data_for_pca_log=data.frame(t(log_data)) -->
+<!-- data_for_pca_vsn=data.frame(t(vsn_dat)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- #removing batch effects -->
+<!-- y1=data.frame(removeBatchEffect(log_data,batch=c(c(1:8),c(1:8)))) -->
+<!-- y2=data.frame(removeBatchEffect(vsn_dat,batch=c(c(1:8),c(1:8)))) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- label_vector=data_for_pca_log%>%rownames(.)%>%gsub("_.*","",.) -->
+<!-- data_for_pca_log$label=unlist(label_vector) -->
+<!-- data_for_pca_vsn$label=unlist(label_vector) -->
+<!-- #data_for_pca_sep_vsn$label=unlist(label_vector) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- pca_vsn=prcomp(data_for_pca_vsn[,c(1:2700)],rank. = 10) -->
+<!-- pca_log=prcomp((data_for_pca_log[,c(1:2700)]),rank. = 10) -->
+<!-- #pca_sep_vsn=prcomp((data_for_pca_sep_vsn[,c(1:512)]),rank. = 10) -->
+<!-- pca_log_batch_effects=prcomp((y1[,c(1:2700)]),rank. = 10) -->
+<!-- pca_vsn_batch_effects=prcomp((y2[,c(1:2700)]),rank. = 10) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- y1=data.frame(t(y1))%>%mutate("labels"=label_vector) -->
+<!-- y2=data.frame(t(y2))%>%mutate("labels"=label_vector) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- autoplot(pca_vsn,data=data_for_pca_vsn,colour="label") -->
+<!-- autoplot(pca_log,data=data_for_pca_log,colour='label') -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- meanSdPlot(as.matrix(log_data),ranks=F) -->
+<!-- meanSdPlot(as.matrix(vsn_dat),ranks = F) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- autoplot(pca_log_batch_effects,data=y1,colour="labels") -->
+<!-- autoplot(pca_vsn_batch_effects,data=y2,colour='labels') -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- t_test_p_vals=data.frame(apply(data,1,FUN = function(x){(t.test(x[1:8],x[9:16]))$p.value})) -->
+<!-- p_adjust=data.frame(p.adjust(unlist(t_test_p_vals),method = "BH")) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- prot_ids=as.vector(rownames(vsn_dat))%>%strsplit(.,";") -->
+<!-- for(i in 1:length(prot_ids)){ -->
+<!--   replacement=as.list(unlist(prot_ids[i])) -->
+<!--   replacement=replacement[replacement %in% proteome_annot_prot] -->
+<!--   if (length(replacement)==0){prot_ids[i]=NA}else{prot_ids[i]=replacement} -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- vsn_dat=vsn_dat[!is.na(prot_ids),] -->
+<!-- rownames(vsn_dat)=prot_ids[!is.na(prot_ids)] -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- log_data=log_data[!is.na(prot_ids),] -->
+<!-- rownames(log_data)=prot_ids[!is.na(prot_ids)] -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- #data=data.frame(log2(data)) -->
+<!-- data=data[,order(names(data))] -->
+<!-- ``` -->
+
+```{r}
+names=strsplit2(colnames(mito_intensities_vsn_zscored),split = ". |_")
+names=data.frame(names)
+```
+
+```{r}
+factor.group=names$X10
+factor.group=relevel(factor(factor.group),"Pre")
+#factor.group
+```
+
+```{r}
+factor.replicate=factor(c(as.character(c(1:8)),as.character(c(1:8))))
+```
+
+
+```{r}
+# pre=grepl('pre',names(data),ignore.case = T)
+# post=grepl('post',names(data),ignore.case = T)
+```
+
+
+```{r}
+#create design matrix
+design=model.matrix(~0+factor.group+factor.replicate)
+colnames(design)=gsub('.*group', '', colnames(design))
+```
+
+
+```{r}
+fit_2<-limma::lmFit(mito_intensities_vsn_zscored,design)
+contrast.matrix_2 <- makeContrasts(delta= Post-Pre,levels=design)
+fit_3<- eBayes(contrasts.fit(fit_2, contrast.matrix_2))
+fit_3$count=data[rownames(fit_3$coefficients),"peptide_count"]
+```
+
+```{r}
+fit_4=spectraCounteBayes(fit_3)
+```
+
+```{r}
+z_scored_mito_output=outputResult(fit_4,coef_col = 1)
+```
+
+```{r}
+SEM=data.frame(sqrt(fit_4$sca.postvar)*fit_4$stdev.unscaled[,1])
+```
+
+```{r}
+logged_output=outputResult(fit_4,coef_col = 1)
+```
+
+```{r}
+sep_vsn_output=outputResult(fit_4,coef_col = 1)
+```
+
+```{r}
+sep_vsn_whole=outputResult(fit_4,coef_col = 1)
+sep_vsn_whole$Uniprot=data[rownames(sep_vsn_whole),"PG.ProteinAccessions"]
+sep_vsn_whole=sep_vsn_whole%>%separate_rows(Uniprot,sep=";")%>%mutate(Mito=ifelse(Uniprot %in% Mito_Gene_to_UniProt$Uniprot,"+",""))
+sep_vsn_whole=sep_vsn_whole%>%group_by(Mito)%>%distinct(gene,.keep_all = T)
+sep_vsn_unnorm_mito=sep_vsn_whole%>%filter(Mito=="+")
+```
+
+```{r}
+DEQMS.results_norm_Hostrup=outputResult(fit_4,coef_col = 1)
+DEQMS.results_norm_Hostrup$Uniprot=data[rownames(DEQMS.results_norm_Hostrup),"PG.ProteinAccessions"]
+DEQMS.results_norm_Hostrup=merge(DEQMS.results_norm_Hostrup,SEM,by=0)
+DEQMS.results_norm_Hostrup=DEQMS.results_norm_Hostrup%>%separate_rows(Uniprot,sep=";")%>%distinct(gene,.keep_all = T)
+DEQMS.results_norm_Hostrup=left_join(DEQMS.results_norm_Hostrup,Mito_Gene_to_UniProt%>%select(Gene,Uniprot),by="Uniprot")
+DEQMS.results_norm_Hostrup=DEQMS.results_norm_Hostrup%>%select(-c(Row.names,gene))%>%rename("SEM"=12)
+```
+
+
+```{r}
+fit_2<-limma::lmFit(unnorm_mito_intensities%>%select(-PG.ProteinAccessions),design)
+contrast.matrix_2 <- makeContrasts(delta= Post-Pre,levels=design)
+fit_3<- eBayes(contrasts.fit(fit_2, contrast.matrix_2))
+fit_3$count=data[rownames(fit_3$coefficients),"peptide_count"]
+```
+
+```{r}
+fit_4=spectraCounteBayes(fit_3)
+```
+
+```{r}
+SEM=data.frame(sqrt(fit_4$sca.postvar)*fit_4$stdev.unscaled[,1])
+```
+
+
+```{r}
+DEQMS.results_unnorm_Hostrup=outputResult(fit_4,coef_col = 1)
+```
+
+```{r}
+DEQMS.results_unnorm_Hostrup=outputResult(fit_4,coef_col = 1)
+DEQMS.results_unnorm_Hostrup$Uniprot=data[rownames(DEQMS.results_unnorm_Hostrup),"PG.ProteinAccessions"]
+DEQMS.results_unnorm_Hostrup=merge(DEQMS.results_unnorm_Hostrup,SEM,by=0)
+DEQMS.results_unnorm_Hostrup=DEQMS.results_unnorm_Hostrup%>%separate_rows(Uniprot,sep=";")%>%distinct(gene,.keep_all = T)
+DEQMS.results_unnorm_Hostrup=left_join(DEQMS.results_unnorm_Hostrup,Mito_Gene_to_UniProt%>%select(Gene,Uniprot),by="Uniprot")
+DEQMS.results_unnorm_Hostrup=DEQMS.results_unnorm_Hostrup%>%select(-c(Row.names,gene))%>%rename("SEM"=12)
+```
+
+
+
+# ```{r}
+# fit=lmFit(vsn_dat,design)
+# contrast.matrix <- makeContrasts(FC=POST-PRE,levels=design)
+# fit2=eBayes(contrasts.fit(fit,contrast.matrix),trend = as.vector(rowMeans(vsn_dat)),robust = T)
+# SEM=data.frame(sqrt(fit2$s2.post)*fit2$stdev.unscaled[,1])
+# ```
+
+```{r}
+Hostrup_2021=data.frame(topTable(fit2,n=Inf,coef=1,confint = T,sort.by ="logFC" ))
+Hostrup_2021=merge(Hostrup_2021,SEM,by = 'row.names')
+Hostrup_2021=Hostrup_2021%>%rename("SE"=ncol(.))
+```
+
+```{r}
+names(DEQMS.results_norm_Hostrup)=apply(X=as.matrix(names(DEQMS.results_norm_Hostrup)),MARGIN = 1,FUN=function(x){paste("Hostrup",x,sep="_")})
+DEQMS.results_norm_Hostrup=DEQMS.results_norm_Hostrup%>%rename("Protein_IDs"=11)
+names(DEQMS.results_unnorm_Hostrup)=apply(X=as.matrix(names(DEQMS.results_unnorm_Hostrup)),MARGIN = 1,FUN=function(x){paste("Hostrup",x,sep="_")})
+DEQMS.results_unnorm_Hostrup=DEQMS.results_unnorm_Hostrup%>%rename("Protein_IDs"=11)
+```
+
+```{r}
+saveRDS(DEQMS.results_norm_Hostrup,"Hostrup_2021_DEQMS_norm")
+saveRDS(DEQMS.results_unnorm_Hostrup,"Hostrup_2021_DEQMS_unnorm")
+```
+
+
+```{r}
+saveRDS(Hostrup_2021,"Hostrup_2021_limma_robust_and_trend")
+```
+
+
+```{r}
+saveRDS(Hostrup_2021,"Hostrup_2021_summary")
+```
+
+
+```{r}
+results_unnorm=readRDS("Hostrup_2021_DEQMS_unnorm")
+result_norm=readRDS("Hostrup_2021_DEQMS_norm")
+```
+
+```{r}
+ggplot(result_norm,aes(x=Hostrup_logFC,y=-log10(Hostrup_sca.P.Value),col=Hostrup_logFC))+geom_point(size=1.5,alpha=0.8)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.3)+geom_hline(yintercept = 2, colour = "red",alpha=0.3)+xlab("logFC")+ylab("p.val")
+```
+
+```{r}
+ggplot(logged_output,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=1.5,alpha=0.8)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+
+```{r}
+ggplot(sep_vsn_output,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=0.8,alpha=1)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+
+
+```{r}
+ggplot(z_scored_mito_output,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=0.8,alpha=1)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+

@@ -1,0 +1,186 @@
+---
+title: "PpIN"
+author: "Siddharth"
+date: '2022-07-12'
+output: html_document
+---
+```{r}
+dev.new()
+dev.cur()
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+rm(list= ls()[!(ls() %in% c("javi_data","Javi_SIT","MCIT_summary"))])
+```
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(stats)
+library(STRINGdb)
+library(igraph)
+```
+
+```{r}
+string_db <- STRINGdb$new(version="11.5", species=9606,score_threshold=200, input_directory="")
+```
+
+
+```{r}
+#SIT_ENSEMBL_prot=bitr(Javi_SIT$Protein_IDs,fromType = "UNIPROT",toType ="" ,OrgDb = org.Hs.eg.db)
+```
+
+```{r}
+proteome_annot_prot=data.frame(proteome_annot_prot)
+proteome_annot_prot=proteome_annot_prot%>%rename("UNIPROT"=1)
+```
+
+```{r}
+Javi_SIT=string_db$map(Javi_SIT,"Protein_IDs")
+```
+
+```{r}
+background_ENSEMBL_prot=string_db$map(proteome_annot_prot,"UNIPROT")
+```
+
+```{r}
+#Javi_SIT=string_db$add_diff_exp_color(SIT_with_String_ids,logFcColStr = adj.)
+```
+
+```{r}
+interactions=string_db$get_interactions(Javi_SIT$STRING_id)
+```
+
+```{r}
+annotations=string_db$get_annotations(string_ids = background_ENSEMBL_prot$STRING_id)
+```
+
+```{r}
+protein_annotations_BP=annotations%>%filter(category=="Process")
+```
+
+```{r}
+OxPhos_prots=protein_annotations_BP%>%filter(term_id=="GO:0006119")%>%select(term_id,string_ids,description)
+OxPhos_prots_list=as.list(strsplit(OxPhos_prots$string_ids,",")[[1]])
+Oxphos_in_SIT=Javi_SIT%>%filter(STRING_id %in% OxPhos_prots_list)
+Oxphos_in_SIT$Gene=data.frame(bitr(Oxphos_in_SIT$Protein_IDs,fromType = "UNIPROT",toType = "SYMBOL",OrgDb = org.Hs.eg.db))$SYMBOL
+Oxphos_in_SIT=Oxphos_in_SIT%>%select(c(STRING_id,Javi_SIT_logFC,Javi_SIT_P.Value,Javi_SIT_adj.P.Val,Gene))
+```
+
+```{r}
+Protein_transport=protein_annotations_BP%>%filter(term_id=="GO:0015031")%>%select(term_id,string_ids,description)
+Protein_transport_list=as.list(strsplit(Protein_transport$string_ids,",")[[1]])
+Protein_transport_in_SIT=Javi_SIT%>%filter(STRING_id %in% Protein_transport_list)
+```
+
+
+```{r}
+Oxphos_in_SIT_sig=Oxphos_in_SIT%>%filter(Javi_SIT_P.Value<=0.05)
+Oxphos_in_SIT_sig=string_db$add_diff_exp_color(Oxphos_in_SIT_sig,logFcColStr = "Javi_SIT_logFC")
+```
+
+```{r}
+#cols = brewer.pal(4, "Blues")
+#pal=colorRampPalette(cols)
+#Oxphos_in_SIT_sig$order = findInterval(Oxphos_in_SIT_sig$Javi_SIT_P.Value, sort(Oxphos_in_SIT_sig$Javi_SIT_P.Value))
+```
+
+
+```{r}
+Oxphos_interactions=data.frame(string_db$get_interactions(Oxphos_in_SIT_sig$STRING_id))
+h=hist(Oxphos_interactions$combined_score,plot=F)
+h$density=h$counts/sum(h$counts)*100
+plot(h,freq=F)
+```
+
+```{r}
+quantile(Oxphos_interactions$combined_score,probs=0.6)
+```
+
+```{r}
+Oxphos_interactions=Oxphos_interactions%>%arrange(.,desc(combined_score))%>%distinct(from,.keep_all = TRUE)
+```
+
+```{r}
+net=graph_from_data_frame(d=Oxphos_interactions,vertices =Oxphos_in_SIT_sig$STRING_id,directed = F)
+```
+
+```{r}
+net=simplify(net,remove.multiple = T,remove.loops = T)
+```
+
+```{r}
+#V(net)$size <- V(net)$audience.size*0.7
+```
+
+
+```{r}
+plot(net,vertex.color=Oxphos_in_SIT_sig$color,vertex.label=Oxphos_in_SIT_sig$Gene,vertex.label.cex=0.5,edge.arrow.size=0.5,margin=c(0.01,0.01,0.01,0.01),vertex.label.color="black",frame=T)
+```
+
+```{r}
+neighbours=string_db$get_neighbors(SIT_with_String_ids$STRING_id)
+neighbours=data.frame(neighbours)
+```
+
+
+```{r}
+Protein_list=SIT_with_String_ids%>%filter(Javi_SIT_adj.P.Val<=0.06)%>%select(STRING_id,color)
+```
+
+```{r}
+payload_id=string_db$post_payload(Protein_list$STRING_id,colors = Protein_list$color)
+```
+
+
+```{r}
+string_db$get_png(Protein_list$STRING_id,payload_id = payload_id,file = "PPI.png")
+```
+
+```{r}
+print(myplot)
+dev.copy(png,'myplot.png')
+dev.off()
+```
+
+
+```{r}
+# get clusters
+clustersList <- string_db$get_clusters(Protein_list$STRING_id,)
+```
+
+```{r}
+par(mfrow=c(2,2),mar=c(1,1,1,1))
+for(i in seq(1:4)){
+string_db$plot_network(clustersList[[i]])
+}
+```
+

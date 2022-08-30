@@ -1,0 +1,456 @@
+---
+title: "Untitled"
+author: "Siddharth"
+date: '2022-05-31'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+rm(list=ls())
+```
+
+
+
+```{r}
+library(readxl)
+library(impute)
+library(vsn)
+library(tidyverse)
+library(limma)
+library(purrr)
+library(ggplot2)
+library(ggfortify)
+library(reshape)
+library(heatmaply)
+library(DEqMS)
+library(clusterProfiler)
+#library(org.Hs.eg.db)
+library(dplyr)
+```
+
+
+```{r}
+# proteome_annot_prot= read_excel("Human.MitoCarta3.0.xls", 
+#                            sheet = "A Human MitoCarta3.0")
+# proteome_annot_prot=(proteome_annot_prot$UniProt)
+```
+
+```{r}
+#Mito_UniProt=read_xlsx("Proteomics with DeQMS/uniprot-download_true_fields_accession_2Creviewed_2Cid_2Cprotein_nam-2022.08.13-16.22.18.59.xlsx")
+```
+
+```{r}
+Mito_Gene_to_UniProt=readxl::read_xlsx("Proteomics with DeQMS/Gene_to_Uniprot.xlsx")
+Mito_Gene_to_UniProt=Mito_Gene_to_UniProt%>%rename(c("Uniprot"="Entry","Gene"="From"))
+```
+
+
+```{r}
+#load data 
+data <- data.frame((read_excel("Schild(2015) raw and non-imputed protein groups.xlsx")))
+data=data%>%select(id,Uniprot,matches("Razor|Unique|Norm"))%>%filter(!is.na(Uniprot))
+data=data%>%select(id,Uniprot,ends_with(as.character(c(0:9))))
+data=data%>%select(id,Uniprot,matches("UA|TA",ignore.case = F))
+#split the UniProt column to allow filtering of mitochondria proteins
+#$Uniprot=strsplit(data$Uniprot,";")
+```
+
+```{r}
+data=data%>%filter(rowMeans(is.na(data%>%select(contains("Norm"))))<=0.35)
+```
+
+```{r}
+pep.count.table=data%>%select(matches("Razor|Unique"))%>%select(-matches("X",ignore.case = F))
+pep.count.table=pep.count.table[,order(colnames(pep.count.table))]
+# count_matrix=pep.count.table[,c(1:10)]+pep.count.table[,c(11:20)]
+# pep.count.table=data.frame(count=rowMins(as.matrix(count_matrix)),Uniprot=data$Uniprot)
+# pep.count.table$count=pep.count.table$count+1
+```
+
+```{r}
+data$peptide_count=rowMins(as.matrix(pep.count.table[,c(1:10)]+pep.count.table[,c(11:20)]))
+data$peptide_count=data$peptide_count+1
+rownames(data)=data$id
+```
+
+```{r}
+#whole_data=data.frame(data%>%separate_rows(Uniprot,sep = ";")%>%distinct(Gene.Names,.keep_all = T))
+```
+
+```{r}
+whole_intensities=data%>%select(contains("Norm"),-matches("X",ignore.case = F))
+```
+
+```{r}
+whole_intensities=impute.knn(as.matrix(whole_intensities),k = 2)$data
+whole_intensities=data.frame(whole_intensities)
+```
+
+```{r}
+mito_data=data%>%separate_rows(Uniprot,sep=";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)
+mito_data=data.frame(mito_data%>%distinct(id,.keep_all = T))
+rownames(mito_data)=mito_data$id
+mito_data=left_join(mito_data,Mito_Gene_to_UniProt[,c(2,1)],by = "Uniprot")
+rownames(mito_data)=mito_data$id
+```
+
+```{r}
+mito_intensities=mito_data%>%select(contains("Norm"))%>%select(-matches("X",ignore.case = F))
+```
+
+```{r}
+mito_intensities=impute.knn(as.matrix(mito_intensities),k = 2)$data
+```
+
+```{r}
+mito_intensities_sum=colSums(mito_intensities,na.rm = T)
+whole_intensities_sum=colSums(whole_intensities,na.rm = T)
+intensities_df=data.frame(mito_intensities_sum,whole_intensities_sum)
+intensities_df[,c(1:2)]=intensities_df[,c(1:2)]/10**4
+intensities_df$MPE=(intensities_df$mito_intensities_sum/intensities_df$whole_intensities_sum)*100
+intensities_df=intensities_df%>%rownames_to_column(var = "label")
+intensities_df=intensities_df%>%mutate(group=ifelse(grepl("UA",label),"Untrained","Trained"))
+intensities_df$pair=c(c(1:8),c(1:8))
+```
+
+```{r}
+mito_intensities_plot=ggplot()+geom_bar(mapping=aes(x=factor(c("Untrained","Trained"),levels = c("Untrained","Trained")),y=c(138906.1,176179.9)),stat = "identity",fill="#fed8b1")+geom_point(intensities_df,mapping = aes(x=factor(group,levels = c("Untrained","Trained")),y=mito_intensities_sum),color="red",alpha=0.7,size=2)+ylab("Scaled Intensities")+xlab("Training status")
+```
+
+```{r}
+MPE_plot=ggplot()+geom_bar(mapping=aes(x=factor(c("Untrained","Trained"),levels = c("Untrained","Trained")),y=c(12.98681,16.20694 )),stat = "identity",fill="#fed8b1")+geom_point(intensities_df,mapping = aes(x=factor(group,levels = c("Untrained","Trained")),y=MPE),color="red",alpha=0.7,size=2)+ylab("MPE")+xlab("Training status")
+```
+
+```{r}
+mito_intensities_plot
+MPE_plot
+```
+
+
+```{r}
+whole_intensities_sep_vsn=data.frame(cbind(normalizeVSN(whole_intensities%>%select(contains("UA"))),normalizeVSN(whole_intensities%>%select(contains("TA")))))
+```
+
+
+```{r}
+mito_intensities=data.frame(mito_intensities)
+mito_intensities_log=data.frame(log2(mito_intensities))
+mito_intensities_sep_VSN=data.frame(cbind(normalizeVSN(mito_intensities%>%select(contains("UA"))),normalizeVSN(mito_intensities%>%select(contains("TA")))))
+```
+
+```{r}
+meanSdPlot(as.matrix(log2(whole_intensities)))
+meanSdPlot(as.matrix(normalizeVSN(whole_intensities)))
+```
+
+
+```{r}
+#create factors (same applies for both vsn and log2 data)
+factor.group=whole_intensities_sep_vsn%>%colnames(.)%>%gsub(".*TA.*","ET",ignore.case = T,.)%>%gsub(".*UA.*","UT",ignore.case = T,.)
+factor.group=relevel(factor(factor.group),"UT")
+factor.group
+```
+
+```{r}
+design=model.matrix(~0+factor.group)
+colnames(design)=gsub('.*group', '', colnames(design))
+```
+
+
+```{r}
+fit<-limma::lmFit(whole_intensities_sep_vsn,design)
+contrast.matrix <- makeContrasts(delta=ET-UT,levels=design)
+fit_2<- eBayes(contrasts.fit(fit, contrast.matrix))
+fit_2$count=data[rownames(fit_2$coefficients),"peptide_count"]
+fit_3=spectraCounteBayes(fit_2)
+```
+
+```{r}
+whole_sep_vsn=outputResult(fit_3,coef_col = 1)
+# whole_sep_vsn$Uniprot=data[rownames(whole_sep_vsn),"Uniprot"]
+# whole_sep_vsn=whole_sep_vsn%>%separate_rows(Uniprot,sep=";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)
+# whole_sep_vsn=whole_sep_vsn%>%distinct(gene,.keep_all = T)
+```
+
+
+```{r}
+logged_output=outputResult(fit_3,coef_col = 1)
+logged_output$Uniprot=mito_data[rownames(logged_output),"Uniprot"]
+logged_output=left_join(logged_output,Mito_Gene_to_UniProt[,c(2,1)],by="Uniprot")
+```
+
+```{r}
+DeQMS_whole=outputResult(fit_3,coef_col = 1)
+DeQMS_whole$UniProt=data[rownames(DeQMS_whole),"Uniprot"]
+```
+
+```{r}
+unnormalized_mito=DeQMS_whole%>%separate_rows(UniProt,sep=";")%>%filter(UniProt %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(gene,.keep_all = T)
+unnormalized_mito=unnormalized_mito%>%dplyr::rename("Uniprot"="UniProt")
+unnormalized_mito=left_join(unnormalized_mito,Mito_Gene_to_UniProt[,c(2,1)],by = "Uniprot")
+```
+
+
+```{r}
+#select the "pre" values from both the trained and untrained group
+UT=grepl('UA',names(mito_intensities),ignore.case = T)
+ET=grepl('TA',names(mito_intensities),ignore.case = T)
+```
+
+
+```{r}
+#select the "pre" values from both the trained and untrained group
+data=data[,c(UT|ET)]%>%add_column(data$Uniprot)%>%rename("Uniprot"=ncol(.))
+prot_ids=data$Uniprot
+```
+
+```{r}
+#change 0s to NA values
+data[,c(1:10)][unlist(data[,c(1:10)]==0)]=NA
+```
+
+```{r}
+#select the "pre" values from both the trained and untrained groups again(as the indices have now changed)
+UT=grepl('UA',names(data),ignore.case = T)
+ET=grepl('TA',names(data),ignore.case = T)
+```
+
+# ```{r}
+# #filter out rows with more than 2 missing values
+# data=data%>%filter(rowSums(is.na(data[,UT]))<=2 & rowSums(is.na(data[,ET]))<=2)
+# ```
+# 
+# ```{r}
+# #impute
+# data[,c(1:10)]=impute.knn(as.matrix(data[,c(1:10)]),k=2)$data
+# ```
+# 
+# ```{r}
+# dat_vsn=data
+# dat_vsn[,c(1:10)]=data.frame(justvsn(as.matrix(dat_vsn[,c(1:10)])))
+# #pca_data_sep_vsn[,UT]=data.frame(justvsn(as.matrix(pca_data_sep_vsn[,UT])))
+# #pca_data_sep_vsn[,ET]=data.frame(justvsn(as.matrix(pca_data_sep_vsn[,ET])))
+# #meanSdPlot(as.matrix(pca_data_sep_vsn[,c(1:10)]))
+# ```   
+# 
+# 
+# ```{r}
+# dat_log=data
+# dat_log[,c(1:10)]=data.frame(log2(dat_log[,c(1:10)]))
+# ```
+# 
+# 
+# ```{r}
+# pca_data_log=data.frame(t(log2(as.matrix(data[,c(1:10)]))))%>%add_column(c(rep("T",5),rep("U",5)))%>%rename("label"=ncol(.))
+# pca_log=prcomp(x = pca_data_log[,c(1:1417)])
+# autoplot(pca_log,data=pca_data_log,colour="label")
+# ```
+# 
+# 
+# ```{r}
+# pca_data_vsn=data.frame(t(dat_vsn[,c(1:10)]))%>%add_column(c(rep("T",5),rep("U",5)))%>%rename("label"=ncol(.))
+# pca_vsn=prcomp(x = pca_data_vsn[,c(1:1417)])
+# autoplot(pca_vsn,data=pca_data_vsn,colour="label")
+# ```
+# 
+# 
+# 
+# ```{r}
+# #filter out mito proteins by matching with mitocarta set
+# prot_ids=data$Uniprot%>%strsplit(.,";")
+# for(i in 1:length(prot_ids)){
+#   replacement=as.list(unlist(prot_ids[i]))
+#   replacement=replacement[replacement %in% proteome_annot_prot]
+#   if (length(replacement)==0){prot_ids[i]=NA}else{
+# prot_ids[i]=replacement}}
+# ```
+# 
+# ```{r}
+# #select row indices of mito proteins
+# prot_ids=data.frame(unlist(prot_ids),row.names = NULL)
+# mito_proteins=!is.na(prot_ids)
+# mito_protein_names=prot_ids[mito_proteins,]
+# ```
+# 
+# 
+# ```{r}
+# #filter out mito proteins for both matrices
+# dat_log=dat_log[mito_proteins,]
+# #(data_logged)=mito_protein_names
+# dat_vsn=dat_vsn[mito_proteins,]
+# ```
+# 
+# ```{r}
+# meanSdPlot(as.matrix(dat_log[,c(1:10)]))
+# meanSdPlot(as.matrix(dat_vsn[,c(1:10)]))
+# ```
+# 
+# 
+# ```{r}
+# t_test_p_vals=data.frame(apply(data_logged,1,FUN = function(x){(t.test(x[1:5],x[6:10],paired=F))$p.value}))
+# p_adjust_log=data.frame(p.adjust(unlist(t_test_p_vals),method = "BH"))
+# ```
+# 
+# ```{r}
+# t_test_p_vals_log=data.frame(apply(data_logged,1,FUN = function(x){(t.test(x[1:5],x[6:10],paired=F)$p.value)}))
+# p_adjust_log=data.frame(p.adjust(unlist(t_test_p_vals),method = "BH"))
+# ```
+
+```{r}
+#create factors (same applies for both vsn and log2 data)
+factor.group=mito_intensities_sep_VSN%>%colnames(.)%>%gsub(".*TA.*","ET",ignore.case = T,.)%>%gsub(".*UA.*","UT",ignore.case = T,.)
+factor.group=relevel(factor(factor.group),"UT")
+factor.group
+```
+
+```{r}
+#create design matrix
+design=model.matrix(~0+factor.group)
+colnames(design)=gsub('.*group', '', colnames(design))
+```
+
+```{r}
+fit<-limma::lmFit(mito_intensities_sep_VSN,design)
+contrast.matrix <- makeContrasts(delta=ET-UT,levels=design)
+fit_2<- eBayes(contrasts.fit(fit, contrast.matrix))
+fit_2$count=mito_data[rownames(fit_2$coefficients),"peptide_count"]
+fit_3=spectraCounteBayes(fit_2)
+```
+
+```{r}
+normalized_mito=outputResult(fit_3,coef_col = 1)
+normalized_mito$Uniprot=mito_data[rownames(normalized_mito),"Uniprot"]
+normalized_mito=left_join(normalized_mito,Mito_Gene_to_UniProt[,c(2,1)],by="Uniprot")
+```
+
+```{r}
+ggplot(normalized_mito,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=1.5,alpha=0.8)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+
+```{r}
+ggplot(results,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=1.5,alpha=0.8)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+
+```{r}
+ggplot(logged_output,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=1.5,alpha=0.5)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+
+```{r}
+ggplot(results_unnorm,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=0.8,alpha=1)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+
+```{r}
+ggplot(whole_intensities_sep_vsn,aes(x=logFC,y=-log10(sca.P.Value),col=logFC))+geom_point(size=1.5,alpha=0.6)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue",alpha=0.5)+geom_hline(yintercept = 2, colour = "red",alpha=0.5)+xlab("logFC")+ylab("p.val")
+```
+
+
+```{r}
+#fit and ebayes for logged data 
+# fit_log=lmFit(dat_log[,c(1:10)],design)
+# contrast.matrix <- makeContrasts(FC=ET-UT,levels=design)
+# fit2_log=eBayes(contrasts.fit(fit_log,contrast.matrix),robust = T,trend = rowMeans(dat_log[,c(1:10)]))
+# SEM=data.frame(sqrt(fit2_log$s2.post)*fit2_log$stdev.unscaled[,1])
+```
+
+```{r}
+#fit and ebayes for vsn data
+fit_vsn=lmFit(vsn_data,design)
+contrast.matrix <- makeContrasts(FC=ET-UT,levels=design)
+fit2_vsn=eBayes(contrasts.fit(fit_vsn,contrast.matrix),robust = T,trend = rowMeans(vsn_data))
+```
+
+
+```{r}
+#summary for log data
+Schild_2015_log2_robust=data.frame(topTable(fit2_log,n=Inf,coef=1,confint = T,sort.by = "none"))
+Schild_2015_log2_robust$Protein_IDs=mito_protein_names
+Schild_2015_log2_robust=Schild_2015_log2_robust%>%add_column(SEM)%>%rename("SE"=ncol(.))
+rownames(Schild_2015_log2_robust)=NULL
+names(Schild_2015_log2_robust)=apply(X=as.matrix(names(Schild_2015_log2_robust)),MARGIN = 1,FUN=function(x){paste("Schild_2015",x,sep="_")})
+Schild_2015_log2_robust=Schild_2015_log2_robust%>%rename("Protein_IDs"='Schild_2015_Protein_IDs')
+```
+
+```{r}
+#summary for vsn data
+Schild_2015_vsn=data.frame(topTable(fit2_vsn,n=Inf,coef=1,confint = T,sort.by ="logFC" ))
+```
+
+
+```{r}
+Schild_2015=data.frame(topTable(fit2,n=Inf,coef=1,confint = T,sort.by ="logFC" ))
+Schild_2015=merge(Schild_2015,SEM,by = 'row.names')
+Schild_2015=Schild_2015%>%rename("SE"=ncol(.))
+names(Schild_2015)=apply(X=as.matrix(names(Schild_2015)),MARGIN = 1,FUN=function(x){paste("Schild_2015",x,sep="_")})
+Schild_2015=Schild_2015%>%rename("Protein_IDs"=1)
+```
+
+```{r}
+saveRDS(Schild_2015_log2_robust,"Schild_2015_summary_with_limma_robust_&_trend")
+```
+
+```{r}
+saveRDS(Schild_2015,"Schild_2015_summary_with_limma")
+```
+
+```{r}
+#Schild_data=data.frame(readRDS("Schild_2015_summary_wiScth_limma"))
+```
+
+
+```{r}
+norm_unique_enrichment=enrichKEGG(normalized_unique,organism = "hsa",keyType = "uniprot",minGSSize = 5,universe=normalized_mito$Uniprot)
+norm_unique_enrichment@result
+```
+
+```{r}
+norm_mito_enrichment=enrichGO(normalized_mito[,"Gene"],keyType = "SYMBOL",OrgDb = org.Hs.eg.db,universe = Mito_Gene_to_UniProt$Gene,"BP")
+```
+
+```{r}
+barplot(norm_mito_enrichment,showCategory = 20,font.size = 5)
+```
+
+
+```{r}
+Protein_to_symbol=AnnotationDbi::mapIds(org.Hs.eg.db,keys = Mito_UniProt$Entry,column = "SYMBOL",keytype = "UNIPROT",multiVals = "first")
+```
+
+```{r}
+saveRDS(normalized_mito,file="DeQMS_Schild_normalized_mito")
+saveRDS(unnormalized_mito,file="DeQMS_Schild_unnormalized_mito")
+```
+
+```{r}
+results=readRDS("DeQMS_Schild_normalized_mito")
+```
+
+```{r}
+results_unnorm=readRDS("../DeQMS_Schild_unnormalized_mito")
+```
+

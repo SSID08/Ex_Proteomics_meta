@@ -1,0 +1,162 @@
+---
+title: "Untitled"
+author: "Siddharth"
+date: '2022-05-31'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+rm(list=ls())
+```
+
+
+```{r}
+#load libraries
+
+library(readxl)
+library(metafor)
+library(dplyr)
+library(metaviz)
+```
+
+```{r}
+#load datasets
+NVT_Granata=data.frame(readRDS("NVT_Granata"))
+HVT_Granata=data.frame(readRDS("HVT_Granata"))
+Deshmukh_2021=data.frame(readRDS("Deshmukh_2021_summary_with limma"))
+Hostrup_2021=data.frame(readRDS("Hostrup_2021_summary"))
+Javi_MCIT=data.frame(readRDS("Javi_MCIT_summary_with_limma"))
+Javi_SIT=data.frame(readRDS("Javi_SIT_summary_with_limma"))
+Schild_2015=data.frame(readRDS("Schild_2015_summary_with_limma"))
+Popov_2020=data.frame(readRDS("Popov(clean)_with_imputedSE"))
+```
+
+```{r}
+summary_meta=Reduce(function(x,y) merge(x = x, y = y, by = "Protein_IDs",all=TRUE), list(NVT_Granata, HVT_Granata, Deshmukh_2021,Hostrup_2021,Javi_MCIT,Javi_SIT,Schild_2015,Popov_2020))
+```
+
+
+```{r}
+participant_num=matrix(rep(x = c(10,10,5,8,10,11,5,5),each=nrow(summary_meta)),nrow = nrow(summary_meta))
+colnames(participant_num)<-c("num_NVT","num_HVT","num_Deshmukh","num_Hostrup","num_Javi_MCIT","num_Javi_SIT","num_Schild","num_Popov")
+summary_meta<-cbind(summary_meta,participant_num)
+rownames(summary_meta)=summary_meta$Protein_IDs
+summary_meta=summary_meta[,-1]
+summary_meta=summary_meta%>%rename("P.Value"=P.value)
+```
+
+
+```{r}
+saveRDS(summary_meta,"summary_DE_data_with_limma(imputed SE)")
+```
+
+```{r}
+summary_meta=readRDS("summary_DE_data_with_limma(imputed SE)")
+```
+
+```{r}
+#summary_meta$Popov_SE=c(rep(NA,(nrow(summary_meta))))
+participant_num=matrix(rep(x = c(10,10,5,8,10,11,5,5),each=nrow(summary_meta)),nrow = nrow(summary_meta))
+colnames(participant_num)<-c("num_NVT","num_HVT","num_Deshmukh","num_Hostrup","num_Javi_MCIT","num_Javi_SIT","num_Schild","num_Popov")
+summary_meta<-cbind(summary_meta,participant_num)
+rownames(summary_meta)=summary_meta$Protein_IDs
+summary_meta=summary_meta[,-1]
+```
+
+
+```{r}
+protein_id="O00217"
+```
+
+```{r}
+selected_protein=summary_meta[protein_id,]
+selected_protein_table=data.frame(t(selected_protein[grepl('logFC|median' ,colnames(selected_protein))]),t(selected_protein[grepl('SE' ,colnames(selected_protein))]),t(selected_protein[grepl('CI.L',colnames(selected_protein))]),t(selected_protein[grepl("CI.R",colnames(selected_protein))]),t(selected_protein[grepl("P.Value",colnames(selected_protein))]),t(selected_protein[grepl("adj.P.Val",colnames(selected_protein),ignore.case = T)]),t(selected_protein[grepl("num",colnames(selected_protein))]))
+colnames(selected_protein_table)<-c('Mean_logFC',"SE_logFC","CI.L","CI.R","p_value","adj.p_value","num_participants")
+rownames(selected_protein_table)=c("Granata_NVT","Granata_HVT","Deshmukh_2021","Hostrup_2021","Javi_MCIT","Javi_SIT","Schild_2015","Popov_2020")
+#selected_protein_table["Popov","SD_LFC"]=mean(selected_protein_table[,"SD_LFC"],na.rm=TRUE)
+```
+
+```{r}
+selected_protein_table
+```
+```{r}
+length(selected_protein_table[,"Mean/Median_logFC"])
+length(selected_protein_table[,"SE_logFC"])
+```
+
+
+```{r}
+meta=rma(yi=Mean_logFC,sei =SE_logFC,ni=num_participants,method="REML",measure = "ROM",slab = rownames(selected_protein_table),data=selected_protein_table)
+```
+
+```{r}
+table_data=data.frame(Study=row.names(selected_protein_table),mean=c(format(round(selected_protein_table$Mean_logFC,digits = 3))),FDR=c(format(round(selected_protein_table$adj.p_value,digits = 3))),n=format(round(selected_protein_table$num_participants,digits = 2)))
+table_data[,c(2:4)]=data.frame(lapply(table_data[,c(2:4)],as.numeric))
+head(table_data)
+table_data=table_data[!is.na(table_data$mean),]
+```
+
+```{r}
+summary.table=data.frame(Title="Summary effect",mean=format(round(meta$b,3)),FDR=c(format(round(meta$pval,3))),n=format(round(sum(selected_protein_table$num_participants)),3))
+```
+
+
+```{r}
+viz_forest(summary_table = summary.table,study_table = table_data,type = "standard" ,meta,annotate_CI = TRUE,study_labels = table_data$Study,table_headers = c("Study","LogFC","FDR","Num. Participants"),variant = "classic",col='firebrick',text_size =2,summary_col = "steelblue4")
+```
+
+```{r}
+```
+
+
+```{r}
+meta_analysis_table=data.frame()
+for (protein_id in rownames(summary_meta)){
+  selected_protein=summary_meta[protein_id,]
+  selected_protein_table=data.frame(t(selected_protein[grepl('logFC' ,colnames(selected_protein))]),t(selected_protein[grepl('SE' ,colnames(selected_protein))]),t(selected_protein[grepl('CI.L',colnames(selected_protein))]),t(selected_protein[grepl("CI.R",colnames(selected_protein))]),t(selected_protein[grepl("P.Value",colnames(selected_protein))]),t(selected_protein[grepl("adj.P.Val",colnames(selected_protein))]),t(selected_protein[grepl("num",colnames(selected_protein))]))
+  colnames(selected_protein_tablee)<-c('Mean_logFC',"SE_logFC","CI.L","CI.R","p_value","adj.p_value","num_participants")
+  rownames(selected_protein_table)=c("Granata_NVT","Granata_HVT","Deshmukh_2021","Hostrup_2021","Javi_MCIT","Javi_SIT","Schild_2015")
+  meta=suppressWarnings(rma(yi=Mean_logFC,sei = SE_logFC,ni=num_participants,method="REML",measure = "ROM",slab = rownames(selected_protein_table),data=selected_protein_table))
+  meta_analysis_table=rbind(meta_analysis_table,c(meta$beta,meta$ci.lb,meta$ci.ub,meta$pval,meta$k,sum(meta$ni),meta$tau2))}
+```
+
+```{r}
+colnames(meta_analysis_table)=c("LogFC","Confidence Interval(lower)","Confidence Interval(Upper)","P-value","Num. Studies","Num. Participants","Heterogenity Score (Tau^2)")
+```
+
+```{r}
+rownames(meta_analysis_table)=rownames(summary_meta)
+```
+
+```{r}
+meta_analysis_table=meta_analysis_table[,c("LogFC","Confidence Interval(lower)","Confidence Interval(Upper)","P-value","Heterogenity Score (Tau^2)","Num. Participants","Num. Studies")]
+```
+
+```{r}
+saveRDS(meta_analysis_table,"meta_analysis_table")
+```
+

@@ -1,0 +1,506 @@
+---
+title: "Proteomics_analysis_using_limma"
+author: "Siddharth"
+date: "21/05/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+
+```{r}
+rm(list=ls())
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+#load libraries
+library(readxl)
+library(impute)
+library(vsn)
+library(limma)
+library(ggplot2)
+library(ggfortify)
+library(DEqMS)
+library(matrixStats)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(tidyverse)
+library(dplyr)
+```
+
+```{r}
+#load data
+data1<-data.frame(read_excel("Gra", 
+                  sheet = "All proteins linear intensity"))
+```
+
+```{r}
+#IMPI_annotation=read_excel("Proteomics with DeQMS/impi-2021-q4pre-20211001-dist_0.xlsx",sheet = 2)
+```   
+
+```{r}
+#Mito_stuff=IMPI_annotation%>%filter(!is.na(MitoCarta3.0)|(str_detect(`IMPI Class`,"Verified"))|(str_detect(`IMPI Class`,"Associated|Ancilliary") & str_detect(`IMPI SVM Prediction`,"High")))
+```
+
+```{r}
+# Mito_stuff=Mito_stuff%>%separate_rows(Symbol,sep=";")
+# Mito_stuff$Symbol=sapply(Mito_stuff$Symbol,FUN = str_trim)
+# write_tsv(Mito_stuff%>%distinct(Symbol,.keep_all = T)%>%dplyr::select(Symbol),file = "MitoGenes")
+```
+
+
+```{r}
+df.prot=data.frame(read_tsv("Granata_analysis/proteinGroups_Granata.txt"))
+```
+
+```{r}
+Mito_Gene_to_UniProt=readxl::read_xlsx("Proteomics with DeQMS/Gene_to_Uniprot.xlsx")
+Mito_Gene_to_UniProt=Mito_Gene_to_UniProt%>%dplyr::rename("Uniprot"="Entry","Gene"="From")
+```
+
+```{r}
+df.prot = df.prot%>%filter(is.na(Reverse) & is.na(Potential.contaminant))
+rownames(df.prot)=as.character(c(1:nrow(df.prot)))
+df.prot$id=as.character(c(1:nrow(df.prot)))
+```
+
+```{r}
+df.prot$Peptide_count=rowMins(as.matrix(df.prot%>%dplyr::select(contains("Razor...unique.peptides."))))
+df.prot$Peptide_count=df.prot$Peptide_count+1
+```
+
+
+```{r}
+mito_data=data.frame(df.prot%>%separate_rows(Majority.protein.IDs,sep=";")%>%filter(Majority.protein.IDs %in% Mito_Gene_to_UniProt$Uniprot))
+mito_data=mito_data%>%distinct(id,.keep_all = T)%>%select(id,Majority.protein.IDs,contains("LFQ"),Peptide_count)
+rownames(mito_data)=mito_data$id
+mito_intensities=mito_data%>%select(contains("LFQ"))
+mito_intensities[mito_intensities==0]<-NA
+mito_intensities=mito_intensities%>%filter(rowMeans(is.na(mito_intensities))<=0.35)
+```
+
+
+```{r}
+whole_prot_intensities=df.prot%>%dplyr::select(contains("LFQ"))
+whole_prot_intensities[whole_prot_intensities==0]<-NA
+whole_prot_intensities=whole_prot_intensities%>%filter(rowMeans(is.na(whole_prot_intensities))<=0.35)
+```
+
+```{r}
+mito_intensities_sum=colSums(mito_intensities,na.rm = T)
+whole_intensities_sum=colSums(whole_prot_intensities,na.rm = T)
+intensities_df=data.frame(mito_intensities_sum,whole_intensities_sum)
+intensities_df$label=str_match(rownames(intensities_df), pattern = "([0-9]*[A-Z]*)_([A-Z]*)_([A-Z])")[,3]
+intensities_df[,c(1:2)]=intensities_df[,c(1:2)]/10**4
+intensities_df=intensities_df%>%mutate(MPE=(mito_intensities_sum/whole_intensities_sum)*100)
+```
+
+```{r}
+t.test(intensities_df[intensities_df$label=="NTV","MPE"],intensities_df[intensities_df$label=="HTV","MPE"],paired = T,alternative = "l",var.equal = F)
+```
+
+
+```{r}
+MPE_plot=ggplot()+geom_bar(mapping=aes(factor(c("BL","NTV","HTV","RTV"),levels =c("BL","NTV","HTV","RTV") ),y=c(27.44584,34.40368,41.89084,37.06152)),stat = "identity",fill="#fed8b1",)+geom_point(intensities_df,mapping = aes(x=factor(label,levels=c("BL","NTV","HTV","RTV")),y=MPE),color="black",alpha=0.7,size=0.5)+coord_cartesian(ylim = c(20,60))
+```
+
+```{r}
+mito_intensities_plot=ggplot()+geom_bar(mapping=aes(factor(c("BL","NTV","HTV","RTV"),levels =c("BL","NTV","HTV","RTV") ),y=c(56122424,64381591,76352979,70963445)),stat = "identity",fill="#fed8b1",)+geom_point(intensities_df,mapping = aes(x=factor(label,levels=c("BL","NTV","HTV","RTV")),y=mito_intensities_sum),color="black",alpha=0.7,size=0.5)
+```
+
+```{r}
+ggsave("Granata_MPE.png",plot=MPE_plot+xlab("Training Status")+ylab("% Mito Enrichment"),device = "png",height=5, width=5, units=c("in"), dpi=600)
+ggsave("Granata_mito_intensities.jpg",plot=mito_intensities_plot+xlab("Training Status")+ylab("Raw Intensities scaled by 10^4"),device = "jpg",height=5, width=5, units=c("in"), dpi=600)
+```
+
+
+```{r}
+#prot_intensities_long=prot_intensities%>%gather("sample","intensity",-Gene.names)
+mito_biorep_names <- str_match(rownames(intensities_df),"[0-9]+[A-Z]..[0-9]_[A-Z]")[,1]
+mito_biorep_names <- str_replace(mito_biorep_names, ".1_", "_BL_")
+mito_biorep_names <- str_replace(mito_biorep_names, ".2_", "_NTV_")
+mito_biorep_names <- str_replace(mito_biorep_names, ".5_", "_HTV_")
+mito_biorep_names <- str_replace(mito_biorep_names, ".8_", "_RTV_")
+rownames(intensities_df)=mito_biorep_names
+```
+
+```{r}
+#colnames(whole_prot_intensities)=mito_biorep_names
+```
+
+```{r}
+# gene_ids=strsplit(prot_intensities$Gene.names,";")
+# for(i in 1:length(gene_ids)){
+#   replacement=(unlist(gene_ids[i]))
+#   replacement=replacement[replacement %in% unlist(strsplit(unlist(Mito_stuff$Symbol),";"))]
+#   if (length(replacement)==0){gene_ids[i]=NA}else{
+# gene_ids[i]=replacement}}
+# #gene_ids=unlist(gene_ids)
+# mito_prot=!is.na(gene_ids)
+```
+
+```{r}
+# prot_ids=strsplit(prot_intensities$Majority.protein.IDs,";")
+# for(i in 1:length(prot_ids)){
+#   replacement=unlist(prot_ids[i])
+#   if (length(replacement)==0){prot_ids[i]=NA}else{
+# prot_ids[i]=replacement}}
+# #gene_ids=unlist(gene_ids)
+# mito_prot=!is.na(prot_ids)
+# length(prot_ids[mito_prot])
+```
+
+
+```{r}
+# prot_intensities=prot_intensities%>%separate_rows(Majority.protein.IDs,sep=";")
+# mito_intensities=prot_intensities%>%filter(Majority.protein.IDs %in% file_from_Uniprot$Entry)
+# mito_intensities=mito_intensities%>%distinct(Gene.names,.keep_all = T)
+# mito_intensities=data.frame(mito_intensities%>%filter(rowMeans(is.na(mito_intensities%>%select_if(is.numeric)))<=0.35))
+# ```
+# 
+# ```{r}
+# pep.count.table=data.frame(count=rowMins(as.matrix(df.prot%>%dplyr::select(contains("Razor...unique.peptides.")))),Gene_id=df.prot%>%dplyr::select(Gene.names))
+# pep.count.table=pep.count.table%>%filter(Gene.names %in% unlist(mito_intensities$Gene.names))
+# pep.count.table$count=pep.count.table$count+1
+# pep.count.table=pep.count.table[order(pep.count.table$Gene.names),]
+# mito_intensities=mito_intensities[order(mito_intensities$Gene.names),]
+# rownames(pep.count.table)=mito_intensities$Majority.protein.IDs
+
+#rownames(mito_intensities)=mito_intensities$Majority.protein.IDs
+#mito_intensities=mito_intensities%>%dplyr::select(-c(Gene.names,Majority.protein.IDs))
+
+# ```
+```
+
+```{r}
+whole_prot_intensities=impute.knn(as.matrix(whole_prot_intensities),k = 2)$data
+whole_prot_intensities=data.frame(normalizeVSN(whole_prot_intensities))
+```
+
+```{r}
+mito_intensities=impute.knn(as.matrix(mito_intensities),k = 2)$data
+mito_intensities=data.frame(mito_intensities)
+mito_intensities_sep_vsn=cbind(normalizeVSN(mito_intensities%>%select(contains("BL"))),normalizeVSN(mito_intensities%>%select(contains("NTV"))),normalizeVSN(mito_intensities%>%select(contains("HTV"))))
+mito_intensities_vsn=data.frame(normalizeVSN(mito_intensities))
+```
+
+```{r}
+#create factors
+mito_anno_samples <- str_match(colnames(mito_intensities_sep_vsn), pattern = "([0-9]*[A-Z]*)_([A-Z]*)_([A-Z])")[,2:4]
+colnames(mito_anno_samples)=c("subject","group","batch")
+mito_anno_samples=data.frame(mito_anno_samples)
+factor.group=factor(mito_anno_samples$group)
+factor.replicate=factor(mito_anno_samples$subject)
+factor.batch=factor(mito_anno_samples$batch)
+# factor.group=mito_intensities%>%colnames(.)%>% gsub(".*_BL.*", "PRE",.) %>% gsub(".*_NTV.*","NVT",.)%>%gsub(".*_HTV.*","HVT",.)%>%gsub(".*_RTV.*","RVT",.)
+# factor.group=factor(factor.group)
+# factor.group=relevel(factor.group,"PRE")
+```
+
+
+```{r}
+#create design matrix
+design_2<- model.matrix(~0+factor.group+factor.replicate+factor.batch)
+colnames(design_2)=gsub('.*\\.', '', colnames(design_2))
+```
+
+```{r}
+#corfit <- duplicateCorrelation(mito_intensities, design_2, block = factor.batch)
+```
+
+
+```{r}
+#pep.count.table
+```
+
+```{r}
+##]corfit <- duplicateCorrelation(data1_mito_numeric, design_2, block=factor.replicate)
+#corfit$consensus.correlation
+```
+
+
+```{r}
+fit_2<-limma::lmFit(mito_intensities_sep_vsn,design_2)
+contrast.matrix_2 <- makeContrasts(Normal_volume= groupNTV-groupBL, High_volume=groupHTV-groupNTV,levels=design_2)
+fit_3<- eBayes(contrasts.fit(fit_2, contrast.matrix_2))
+fit_3$count=mito_data[rownames(fit_3$coefficients),"Peptide_count"]
+```
+
+```{r}
+fit_4=spectraCounteBayes(fit_3)
+```
+
+```{r}
+DEqMS.results_normalized_NVT= outputResult(fit_4,coef_col = 1)
+DEqMS.results_normalized_HVT=outputResult(fit_4,coef_col = 2)
+```
+
+```{r}
+DEqMS.results_normalized_NVT$Uniprot=df.prot[rownames(DEqMS.results_normalized_NVT),"Majority.protein.IDs"]
+DEqMS.results_normalized_HVT$Uniprot=df.prot[rownames(DEqMS.results_normalized_HVT),"Majority.protein.IDs"]
+```
+
+```{r}
+SEM_NVT=data.frame(sqrt(fit_4$sca.postvar)*fit_4$stdev.unscaled[,1])
+SEM_HVT=data.frame(sqrt(fit_4$sca.postvar)*fit_4$stdev.unscaled[,2])
+```
+
+```{r}
+DEqMS.results_normalized_HVT=merge(DEqMS.results_normalized_HVT,SEM_HVT,by="row.names")
+DEqMS.results_normalized_NVT=merge(DEqMS.results_normalized_NVT,SEM_NVT,by = "row.names")
+```
+
+
+```{r}
+DEqMS.results_normalized_NVT=DEqMS.results_normalized_NVT%>%separate_rows(Uniprot,sep = ";")%>%distinct(gene,.keep_all = T)
+DEqMS.results_normalized_HVT=DEqMS.results_normalized_HVT%>%separate_rows(Uniprot,sep = ";")%>%distinct(gene,.keep_all = T)
+```
+
+```{r}
+DEqMS.results_normalized_NVT=left_join(DEqMS.results_normalized_NVT,Mito_Gene_to_UniProt%>%select(Uniprot,Gene),by="Uniprot")
+DEqMS.results_normalized_HVT=left_join(DEqMS.results_normalized_HVT,Mito_Gene_to_UniProt%>%select(Uniprot,Gene),by="Uniprot")
+DEqMS.results_normalized_NVT=DEqMS.results_normalized_NVT%>%rename("SEM"=14)%>%select(-gene,-Row.names)
+DEqMS.results_normalized_HVT=DEqMS.results_normalized_HVT%>%rename("SEM"=14)%>%select(-gene,-Row.names)
+```
+
+```{r}
+DEqMS.results_normalized_HVT
+```
+
+
+```{r}
+# fit_with_limma=eBayes(contrasts.fit(fit_2,contrast.matrix_2),trend=rowMeans(mito_intensities),robust=T)
+# table_with_limma=topTable(fit_with_limma,n=Inf,coef=1)
+```
+
+
+
+```{r}
+fit_2<-limma::lmFit(whole_prot_intensities,design_2)
+contrast.matrix_2 <- makeContrasts(Normal_volume= groupNTV-groupBL, High_volume=groupHTV-groupNTV,levels=design_2)
+fit_3<- eBayes(contrasts.fit(fit_2, contrast.matrix_2))
+fit_3$count=df.prot[rownames(fit_3$coefficients),"Peptide_count"]
+fit_4=spectraCounteBayes(fit_3)
+```
+
+```{r}
+DEqMS.results_unnormalized_NVT= outputResult(fit_4,coef_col = 1)
+DEqMS.results_unnormalized_HVT=outputResult(fit_4,coef_col = 2)
+```
+
+```{r}
+DEqMS.results_unnormalized_NVT$Uniprot=df.prot[rownames(DEqMS.results_unnormalized_NVT),"Majority.protein.IDs"]
+DEqMS.results_unnormalized_NVT_mito=DEqMS.results_unnormalized_NVT%>%separate_rows(Uniprot,sep=";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(gene,.keep_all = T)
+```
+
+```{r}
+DEqMS.results_unnormalized_HVT$Uniprot=df.prot[rownames(DEqMS.results_unnormalized_HVT),"Majority.protein.IDs"]
+DEqMS.results_unnormalized_HVT_mito=DEqMS.results_unnormalized_HVT%>%separate_rows(Uniprot,sep=";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(gene,.keep_all = T)
+```
+
+
+```{r}
+NVT_summary=merge(DEqMS.results_NVT,SEM_NVT,by = 'row.names')
+NVT_summary=NVT_summary%>%dplyr::rename("Protein_IDs"=1,"SE"=ncol(.))%>%dplyr::select(-gene)
+```
+
+```{r}
+HVT_summary=merge(DEqMS.results_HVT,SEM_HVT,by = 'row.names')
+HVT_summary=HVT_summary%>%dplyr::rename("Protein_IDs"=1,"SE"=ncol(.))%>%dplyr::select(-gene)
+```
+
+
+```{r}
+op <- par(mfrow=c(1,2), mar=c(4,4,4,1), oma=c(0.5,0.5,0.5,0))
+Residualplot(fit_4,xlab="log2(peptide count)",main="DEqMS")
+x = fit_3$count
+y = log(fit_3$s2.prior) - log(fit_3$sigma^2)
+plot(log2(x),y,ylim=c(-6,2),ylab="Variance(estimated-observed)", pch=20, cex=0.5,
+     xlab = "log2(peptide count)",main="Limma")
+```
+
+
+```{r}
+# mito_intensities=mito_intensities%>%filter(rowSums(is.na(mito_intensities%>%select(contains("BL"))))<=3 & rowSums(is.na(mito_intensities%>%select(contains("NTV")))<=3) & rowSums(is.na(mito_intensities%>%select(contains("HTV"))))<=3 & rowSums(is.na(mito_intensities%>%select(contains("RTV"))))<=3)
+```
+
+
+```{r}
+# mito_intensities=mito_intensities%>%filter(rowMeans(is.na(.))<0.35)
+# mito_intensities=mito_intensities%>%select(-Gene.names)
+```
+
+```{r}
+# pep.count.table=pep.count.table[mito_prot,]
+# rownames(pep.count.table)=gene_ids[mito_prot]
+# pep.count.table=pep.count.table%>%select(-Gene_id)
+#pep.count.table=pep.count.table%>%filter(Gene_id %in% unlist(prot_intensities$Gene.names))
+```
+
+
+
+```{r}
+#prot_intensities=prot_intensities[order(prot_intensities$Gene.names),]
+#pep.count.table=pep.count.table[order(pep.count.table$Gene_id),]
+```
+
+
+<!-- ```{r} -->
+<!-- data1=data1%>%select(Majority.protein.IDs,c(P01_BL:P10_PR)) -->
+<!-- rownames(data1)=data1$Majority.protein.IDs -->
+<!-- data1=data1%>%select(-Majority.protein.IDs) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- #segment data based on group -->
+<!-- pre.vector=data1%>%colnames(.)%>%gsub(".*_","",.) -->
+<!-- pre=which(pre.vector=="BL") -->
+<!-- NVT=which(pre.vector=="PN") -->
+<!-- HVT=which(pre.vector=="PH") -->
+<!-- RVT=which(pre.vector=="PR") -->
+<!-- #filter out rows with missing data above threshold -->
+<!-- data1=data1%>%filter(rowSums(data1%>%select(pre)==0)<=3 & rowSums(data1%>%select(NVT)==0)<=3 & rowSums(data1%>%select(HVT)==0)<=3 & rowSums(data1%>%select(RVT)==0)<=3) -->
+<!-- data1=data.frame(data1) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- #change 0s to NAs -->
+<!-- data1[data1==0]=NA -->
+<!-- data1=impute.knn(as.matrix(data1,k=2))$data -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- prot_ids=strsplit(rownames(data1),";") -->
+<!-- for(i in 1:length(prot_ids)){ -->
+<!--    replacement=as.list(unlist(prot_ids[i])) -->
+<!--    replacement=replacement[replacement %in% proteome_annot_prot] -->
+<!--    if (length(replacement)==0){prot_ids[i]=NA}else{prot_ids[i]=replacement} -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- vsn_dat=data.frame(justvsn(as.matrix(data1))) -->
+<!-- log_dat=data.frame(log2(data1)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- vsn_dat=data.frame(vsn_dat[!is.na(prot_ids),]) -->
+<!-- rownames(vsn_dat)=prot_ids[!is.na(prot_ids)] -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- log_dat=data.frame(log_dat[!is.na(prot_ids),]) -->
+<!-- rownames(log_dat)=prot_ids[!is.na(prot_ids)] -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- meanSdPlot(as.matrix(vsn_dat)) -->
+<!-- meanSdPlot(as.matrix(log_dat)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- pca_vsn_dat=data.frame(t(vsn_dat))%>%add_column(c(rep("BL",10),rep("PN",10),rep("PH",10),rep("PR",10)))%>%rename("label"=ncol(.)) -->
+<!-- pca_log_dat=data.frame(t(log_dat))%>%add_column(c(rep("BL",10),rep("PN",10),rep("PH",10),rep("PR",10)))%>%rename("label"=ncol(.)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- pca_vsn=prcomp(t(vsn_dat),rank. = 10) -->
+<!-- pca_log=prcomp(t(log_dat),rank. = 10) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- autoplot(pca_vsn,data=pca_vsn_dat,colour="label") -->
+<!-- autoplot(pca_log,data=pca_log_dat,colour='label') -->
+<!-- ``` -->
+
+
+
+```{r}
+#data1_mito_filter[,pre]=vsnMatrix(as.matrix(data1_mito_filter[,pre]),returnData =T)@hx
+#data1_mito_filter[,NVT]=vsnMatrix(as.matrix(data1_mito_filter[,NVT]),returnData = T)@hx
+#data1_mito_filter[,HVT]=vsnMatrix(as.matrix(data1_mito_filter[,HVT]),returnData = T)@hx
+#data1_mito_filter[,RVT]=vsnMatrix(as.matrix(data1_mito_filter[,RVT]),returnData = T)@hx
+#data1_mito_numeric=data.frame(data1_mito_filter[,c(pre,NVT,HVT,RVT)])
+#data1_mito_numeric <- data1_mito_numeric[,order(names(data1_mito_numeric))]
+```
+
+```{r}
+#filter mitochondrial proteins
+#data1_mito_numeric=data1_mito_numeric%>%filter(`Majority protein IDs` %in% proteome_annot_prot)
+#rownames(data1_mito_numeric)=data1_mito_numeric$`Majority protein IDs`
+```
+
+
+
+```{r}
+# NVT_summary<-data.frame(topTable(fit_3,n=Inf,coef=1,confint = T))
+# NVT_summary=merge(NVT_summary,SEM_NVT,by = 'row.names')
+# NVT_summary=NVT_summary%>%rename("Protein_IDs"=1,"SE"=ncol(.))
+# ```
+# 
+# 
+# ```{r}
+# HVT_summary <- data.frame(topTable(fit_3,n=Inf,coef=2,confint = T))
+# HVT_summary=merge(HVT_summary,SEM_HVT,by = 'row.names')
+# HVT_summary=HVT_summary%>%rename("Protein_IDs"=1,"SE"=ncol(.))
+```
+
+```{r}
+names(DEqMS.results_normalized_NVT)=apply(X=as.matrix(names(DEqMS.results_normalized_NVT)),MARGIN = 1,FUN=function(x){paste("NVT_Granata",x,sep="_")})
+```
+
+```{r}
+names(DEqMS.results_normalized_HVT)=apply(X=as.matrix(names(DEqMS.results_normalized_HVT)),MARGIN = 1,FUN=function(x){paste("HVT_Granata",x,sep="_")})
+```
+
+```{r}
+DEqMS.results_normalized_NVT=DEqMS.results_normalized_NVT%>%dplyr::rename("Protein_IDs"=11,"Gene"=13)
+DEqMS.results_normalized_HVT=DEqMS.results_normalized_HVT%>%dplyr::rename("Protein_IDs"=11,"Gene"=13)
+```
+
+```{r}
+DEqMS.results_normalized_NVT=DEqMS.results_normalized_NVT%>%select(Gene,Protein_IDs,NVT_Granata_logFC:NVT_Granata_SEM)
+DEqMS.results_normalized_HVT=DEqMS.results_normalized_HVT%>%select(Gene,Protein_IDs,HVT_Granata_logFC:HVT_Granata_SEM)
+```
+
+
+```{r}
+saveRDS(DEqMS.results_normalized_NVT,"NVT_Granata_with_DEqMS")
+saveRDS(DEqMS.results_normalized_HVT,"HVT_Granata_with_DeqMS")
+```
+
+```{r}
+saveRDS(DEqMS.results_unnormalized_NVT_mito,"NVT_Granata_with_DEqMS_unnormalized")
+saveRDS(DEqMS.results_unnormalized_HVT_mito,"HVT_Granata_with_DeqMS_unnormalized")
+```
+
+

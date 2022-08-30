@@ -1,0 +1,544 @@
+---
+title: "Proteomics_analysis_with_limma_Javi"
+author: "Siddharth"
+date: '2022-05-27'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+```{r}
+rm(list=ls())
+```
+
+
+```{r}
+#load libraries
+library(readxl)
+library(impute)
+library(vsn)
+library(limma)
+library(purrr)
+library(ggplot2)
+library(ggfortify)
+library(reshape)
+library(heatmaply)
+library(DEqMS)
+```
+
+```{r}
+library(dplyr)
+library(tidyverse)
+```
+
+
+```{r}
+#load data
+javi_data=read_xlsx(path = "Proteomics with DeQMS/Javi_DIA_Proteomics.xlsx")
+```
+
+```{r}
+# Mito_UniProt=read_xlsx("Proteomics with DeQMS/uniprot-download_true_fields_accession_2Creviewed_2Cid_2Cprotein_nam-2022.08.13-16.22.18.59.xlsx")
+#load updated mitocarta database
+#IMPI_annotation=read_excel("Sample Enrichment Analysis/impi-2021-q4pre-20211001-dist_0.xlsx",sheet = 2)
+#Mitocarta=read_excel("Human.MitoCarta3.0.xls",sheet = "C MitoPathways")
+#Mitocarta$Genes=sapply(Mitocarta$Genes%>%strsplit(.,","),FUN = str_trim)
+#Sid_mito=data.frame(readRDS("Sid_mito_proteins"))
+```
+
+```{r}
+Mito_Gene_to_UniProt=readxl::read_xlsx("Proteomics with DeQMS/Gene_to_Uniprot.xlsx")
+Mito_Gene_to_UniProt=Mito_Gene_to_UniProt%>%rename(c("Uniprot"="Entry","Gene"="From"))
+```
+
+```{r}
+# Oxphos_genes=Mitocarta%>%filter(MitoPathway=="OXPHOS")%>%dplyr::select(Genes)
+# Oxphos_genes=unlist(Oxphos_genes$Genes)
+```
+
+
+```{r}
+# Mito_stuff=IMPI_annotation%>%filter(`IMPI Class`!="Unclassified")
+# Mito_stuff=Mito_stuff%>%filter(str_detect(`IMPI Class`,"Verified")|(str_detect(`IMPI Class`,"Associated|Ancilliary")) & str_detect(`IMPI SVM Prediction`,"High")|!(is.na(MitoCarta3.0)))
+```
+
+```{r}
+javi_data=javi_data%>%dplyr::select(PG.Genes,PG.ProteinGroups,contains("StrippedSequences"),contains("MS2Quantity"))
+javi_data=javi_data%>%mutate_at(vars(contains("MS2Quantity")),as.numeric)
+```
+
+```{r}
+javi_data=javi_data%>%filter(rowMeans(is.na(javi_data%>%dplyr::select(contains("MS2Quantity"))))<=0.35)
+javi_data$id=as.character(c(1:nrow(javi_data)))
+javi_data=data.frame(javi_data)
+rownames(javi_data)=javi_data$id
+```
+
+```{r}
+javi_data$peptide_count=rowMins(as.matrix(javi_data%>%select(contains("StrippedSequences"))))
+javi_data$peptide_count=javi_data$peptide_count+1
+```
+
+
+```{r}
+mito_intensities=data.frame(javi_data%>%separate_rows(PG.ProteinGroups,sep=";")%>%filter(PG.ProteinGroups %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(id,.keep_all = T)%>%select(id,contains("MS2Quantity")))
+rownames(mito_intensities)=mito_intensities$id
+mito_intensities=mito_intensities%>%select(-id)
+#mito_anno_samples=data.frame(strsplit2(mito_anno_samples$X6,split = ".",f))
+```
+
+
+```{r}
+mito_anno_samples <- data.frame(strsplit2(colnames(mito_intensities),split = "[_|.]"))
+colnames(mito_intensities)=mito_anno_samples$X9
+```
+
+```{r}
+whole_intensities=data.frame(javi_data%>%select(contains("MS2Quantity")))
+mito_anno_samples <- data.frame(strsplit2(colnames(whole_intensities),split = "[_|.]"))
+colnames(whole_intensities)=mito_anno_samples$X9
+```
+
+```{r}
+mito_intensities=impute.knn(as.matrix(mito_intensities))$data
+mito_intensities=data.frame(normalizeVSN(mito_intensities))
+```
+
+```{r}
+whole_intensities=impute.knn(as.matrix(whole_intensities))$data
+whole_intensities=data.frame(normalizeVSN(whole_intensities))
+```
+
+```{r}
+meanSdPlot(log2(whole_intensities))
+meanSdPlot(normalizeVSN(whole_intensities))
+```
+
+```{r}
+#create vectors to split groups
+pre_MCIT=c(paste('X',dput(scan(text="3A
+5A
+6A
+7A
+13A
+16A
+19A
+21A
+22A
+26A
+27A",what="")),sep=""))
+pre_SIT=c(paste('X',dput(scan(text="
+1A
+4A
+8A
+10A
+11A
+15A
+17A
+18A
+20A
+23A
+24A
+25A",what="")),sep=""))
+MCIT=c(paste('X',dput(scan(text="3B
+5B
+6B
+7B
+13B
+16B
+19B
+21B
+22B
+26B
+27B",what = "")),sep=""))
+SIT=c(paste('X',dput(scan(text="1B
+4B
+8B
+10B
+11B
+15B
+17B
+18B
+20B
+23B
+24B
+25B",what="")),sep=""))
+```
+
+
+```{r}
+# javi_data=javi_data%>%filter((rowSums(is.na(javi_data%>%select(pre_SIT)))<=0.3*length(pre_SIT) & rowSums(is.na(javi_data%>%select(SIT)))<=0.3*length(SIT))|(rowSums(is.na(javi_data%>%select(pre_MCIT)))<=0.3*length(pre_MCIT) & rowSums(is.na(javi_data%>%select(MCIT)))<=.3*length(MCIT)))
+```
+
+```{r}
+#javi_data[,c(pre_SIT,pre_MCIT,SIT,MCIT)]=impute.knn(as.matrix(javi_data[,c(pre_SIT,pre_MCIT,SIT,MCIT)]),k=2)$data
+```
+
+```{r}
+#vsn_dat=javi_data
+#vsn_sep_dat=javi_data
+#log_dat=javi_data
+```
+
+
+```{r}
+# vsn_dat[,c(1:42)]=normalizeVSN(as.matrix(vsn_dat[,c(1:42)]))
+# #log_dat=data.frame(log2(javi_data))
+# vsn_sep_dat[,c(pre_SIT,pre_MCIT)]=normalizeVSN(as.matrix(vsn_sep_dat[,c(pre_SIT,pre_MCIT)]))
+# vsn_sep_dat[,SIT]=normalizeVSN(as.matrix(vsn_sep_dat[,SIT]))
+# vsn_sep_dat[,MCIT]=normalizeVSN(as.matrix(vsn_sep_dat[,MCIT]))
+```
+
+```{r}
+gene_ids=strsplit(javi_data$Genename,";")
+for(i in 1:length(gene_ids)){
+  replacement=as.list(unlist(gene_ids[i]))
+  replacement=replacement[replacement %in% Sid_mito$Symbol]
+  if (length(replacement)==0){gene_ids[i]=NA}else{
+gene_ids[i]=replacement}}
+gene_ids=unlist(gene_ids)
+```
+
+
+```{r}
+mito_prot=!is.na(gene_ids)
+javi_mito=javi_data[mito_prot,]
+rownames(javi_mito)=javi_mito$Uniprot
+javi_mito=javi_mito%>%select(c(1:42))
+#vsn_dat=vsn_dat[mito_prot,]
+#vsn_sep_dat=vsn_sep_dat[mito_prot,]
+#log_dat=log_dat[mito_prot,]
+```
+
+```{r}
+javi_mito=impute.knn(as.matrix(javi_mito),k=2)$data
+javi_mito=data.frame(normalizeVSN(javi_mito))
+```
+
+
+```{r}
+#meanSdPlot(as.matrix(vsn_dat))
+#meanSdPlot(as.matrix(log_dat))
+```
+
+```{r}
+pca_vsn_dat=data.frame(t(vsn_dat[,c(1:42)]))
+#pca_vsn_sep_dat=data.frame(t(vsn_sep_dat[,c(1:42)]))
+#pca_log_dat=data.frame(t(log_dat[,c(1:42)]))
+#pca_log_dat_Oxphos=data.frame(t(log_dat_OxPhos[,c(1:42)]))
+```
+
+
+```{r}
+pre_SIT=which(rownames(pca_vsn_dat) %in% c(pre_SIT))
+pre_MCIT=which(rownames(pca_vsn_dat)%in% c(pre_MCIT))
+SIT=which(rownames(pca_vsn_dat) %in% c(SIT))
+MCIT=which(rownames(pca_vsn_dat) %in% c(MCIT))
+factor.group=vector("character",length(c(pre_MCIT,pre_SIT,SIT,MCIT)))
+factor.group[pre_SIT]="PRE_SIT"
+factor.group[pre_MCIT]="PRE_MCIT"
+factor.group[SIT]="POST_SIT"
+factor.group[MCIT]="POST_MCIT"
+```
+
+```{r}
+pca_vsn_dat$labels = factor.group
+pca_vsn_sep_dat$labels = factor.group
+```
+
+```{r}
+# pca_vsn=prcomp(pca_vsn_dat%>%select(-ncol(.)),rank. = 10)
+# pca_sep_vsn=prcomp(pca_vsn_sep_dat%>%select(-ncol(.)),rank. = 10)
+# pca_log=prcomp(pca_log_dat,rank. = 20)
+# pca_log_dat_Oxphos=prcomp(pca_log_dat_Oxphos,rank. = 20)
+# lda_dimensions_Oxphos=data.frame(pca_log_dat_Oxphos$x)
+# lda_dimensions=data.frame(pca_log$x)
+```
+
+```{r}
+# autoplot(pca_vsn,data=pca_vsn_dat,colour="labels")
+# autoplot(pca_sep_vsn,data=pca_vsn_sep_dat,colour="labels")
+```
+
+
+```{r}
+# autoplot(pca_vsn,data=pca_vsn_dat,colour="labels")
+# autoplot(pca_log,data=pca_log_dat,colour='labels')
+```
+
+```{r}
+#y1=data.frame(removeBatchEffect(log_dat,batch=factor.replicate))
+# y2=data.frame(removeBatchEffect(vsn_dat[,c(1:42)],batch=factor.replicate))
+# y3=data.frame(removeBatchEffect(vsn_sep_dat[,c(1:42)],batch = factor.replicate))
+```
+
+
+```{r}
+#y1=data.frame(t(y1))%>%mutate("labels"=factor.group)
+# y2=data.frame(t(y2))%>%mutate("labels"=factor.group)
+# y3=data.frame(t(y3))%>%mutate("labels"=factor.group)
+```
+
+```{r}
+#pca_log_batch_effects=prcomp((y1[,c(1:ncol(y1)-1)]),rank. = 10)
+# pca_vsn_batch_effects=prcomp((y2[,c(1:ncol(y2))-1]),rank. = 10)
+# pca_vsn_sep_batch_effects=prcomp((y3[,c(1:ncol(y3))-1]),rank. = 10)
+```
+
+```{r}
+# autoplot(pca_vsn_batch_effects,data=y2,colour='labels')
+# autoplot(pca_vsn_sep_batch_effects,data=y3,colour='labels')
+```
+
+
+```{r}
+# autoplot(pca_log_batch_effects,data=y1,colour="labels")
+# autoplot(pca_vsn_batch_effects,data=y2,colour='labels')
+```
+
+
+
+```{r}
+#create factors
+pre_SIT=which(colnames(mito_intensities) %in% c(pre_SIT))
+pre_MCIT=which(colnames(mito_intensities)%in% c(pre_MCIT))
+SIT=which(colnames(mito_intensities) %in% c(SIT))
+MCIT=which(colnames(mito_intensities) %in% c(MCIT))
+```
+
+```{r}
+#create group factors
+factor.group=vector("character",length(c(pre_MCIT,pre_SIT,SIT,MCIT)))
+factor.group[pre_SIT]="PRE_SIT"
+factor.group[pre_MCIT]="PRE_MCIT"
+factor.group[SIT]="POST_SIT"
+factor.group[MCIT]="POST_MCIT"
+factor.group=factor(factor.group)
+```
+
+```{r}
+# cor_vsn_dat=as.matrix(round(cor(y2),2))
+# names=colnames(cor_vsn_dat)
+# names[c(pre_SIT,pre_MCIT)]=paste("Pre",names[c(pre_SIT,pre_MCIT)],sep=" ")
+# names[c(SIT)]=paste("SIT",names[c(SIT)],sep = " ")
+# names[c(MCIT)]=paste("MCIT",names[c(MCIT)],sep=" ")
+# colnames(cor_vsn_dat)=names
+# rownames(cor_vsn_dat)=names
+#cor_vsn_dat=cor_vsn_dat[order(rownames(cor_vsn_dat)),order(colnames(cor_vsn_dat))]
+```
+
+```{r}
+names
+```
+
+```{r}
+heatmaply_cor((cor_vsn_dat),k_col=3,k_row=3,scale_fill_gradient_fun = ggplot2::scale_fill_gradient2(
+    low = "blue", 
+    high = "red", 
+    midpoint = 0.5, 
+    limits = c(0, 1)),seriation="OLO")
+```
+
+
+```{r}
+#create replicate factors
+factor.replicate=mito_intensities%>%colnames(.)%>%gsub("A|B.*","",.)
+factor.replicate=factor(factor.replicate)
+#factor.replicate=factor(factor.replicate)
+```
+
+```{r}
+#create design matrix
+design<- model.matrix(~0+factor.group+factor.replicate)
+colnames(design)=gsub('.*\\.', '', colnames(design))
+```
+
+```{r}
+fit<-limma::lmFit(mito_intensities,design)
+contrast.matrix <- makeContrasts(SIT= groupPOST_SIT-groupPRE_SIT, High_volume=groupPOST_MCIT-groupPRE_MCIT,levels=design)
+fit_2<- eBayes(contrasts.fit(fit, contrast.matrix))
+fit_2$count=javi_data[rownames(fit_2$coefficients),"peptide_count"]
+fit_3=spectraCounteBayes(fit_2)
+```
+
+```{r}
+DEqMS.results_normalized_SIT= outputResult(fit_3,coef_col = 1)
+DEqMS.results_normalized_MCIT=outputResult(fit_3,coef_col = 2)
+```
+
+```{r}
+DEqMS.results_normalized_SIT$Uniprot=javi_data[rownames(DEqMS.results_normalized_SIT),"PG.ProteinGroups"]
+DEqMS.results_normalized_SIT=DEqMS.results_normalized_SIT%>%separate_rows(Uniprot,sep = ";")%>%distinct(gene,.keep_all = T)
+```
+
+```{r}
+DEqMS.results_normalized_MCIT$Uniprot=javi_data[rownames(DEqMS.results_normalized_MCIT),"PG.ProteinGroups"]
+DEqMS.results_normalized_MCIT=DEqMS.results_normalized_MCIT%>%separate_rows(Uniprot,sep = ";")%>%distinct(gene,.keep_all = T)
+```
+
+```{r}
+SEM_SIT=(sqrt(fit_3$sca.postvar)*fit_3$stdev.unscaled[,1])
+SEM_MCIT=(sqrt(fit_3$sca.postvar)*fit_3$stdev.unscaled[,2])
+```
+
+```{r}
+DEqMS.results_normalized_MCIT=arrange(DEqMS.results_normalized_MCIT,as.numeric(gene))
+DEqMS.results_normalized_SIT=arrange(DEqMS.results_normalized_SIT,as.numeric(gene))
+```
+
+```{r}
+DEqMS.results_normalized_SIT$SEM=SEM_SIT
+DEqMS.results_normalized_MCIT$SEM=SEM_MCIT
+```
+
+
+```{r}
+fit<-limma::lmFit(whole_intensities,design)
+contrast.matrix <- makeContrasts(SIT= groupPOST_SIT-groupPRE_SIT, High_volume=groupPOST_MCIT-groupPRE_MCIT,levels=design)
+fit_2<- eBayes(contrasts.fit(fit, contrast.matrix))
+fit_2$count=javi_data[rownames(fit_2$coefficients),"peptide_count"]
+fit_3=spectraCounteBayes(fit_2)
+```
+```{r}
+DeQMS.results_unnormalized_SIT=outputResult(fit_3,coef_col = 1)
+DEqMS.results_unnormalized_MCIT=outputResult(fit_3,coef_col = 2)
+```
+
+```{r}
+DeQMS.results_unnormalized_SIT$Uniprot=javi_data[rownames(DeQMS.results_unnormalized_SIT),"PG.ProteinGroups"]
+DeQMS.results_unnormalized_SIT_mito=DeQMS.results_unnormalized_SIT%>%separate_rows(Uniprot,sep = ";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(gene,.keep_all = T)
+```
+
+```{r}
+DEqMS.results_unnormalized_MCIT$Uniprot=javi_data[rownames(DEqMS.results_unnormalized_MCIT),"PG.ProteinGroups"]
+DEqMS.results_unnormalized_MCIT_mito=DEqMS.results_unnormalized_MCIT%>%separate_rows(Uniprot,sep = ";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(gene,.keep_all = T)
+```
+
+
+```{r}
+DE_SIT_norm=unlist(DEqMS.results_normalized_SIT%>%filter(Javi_SIT_sca.P.Value<=0.01)%>%select(Uniprot))
+DE_MCIT_norm=unlist(DEqMS.results_normalized_MCIT%>%filter(Javi_MCIT_sca.P.Value<=0.01)%>%select(Uniprot))
+```
+
+```{r}
+DE_SIT_unnorm=unlist(DEqMS.results_unnormalized_MCIT_mito%>%filter(sca.P.Value<=0.01)%>%select(Uniprot))
+```
+
+
+```{r}
+# fit_with_limma=eBayes(contrasts.fit(fit,contrast.matrix),trend=rowMeans(mito_intensities),robust=T)
+# table_with_limma=topTable(fit_with_limma,n=Inf,coef=1)
+```
+
+```{r}
+ggplot(DEqMS.results_normalized_MCIT,aes(x=Javi_MCIT_logFC,y=-log10(Javi_MCIT_sca.P.Value),col=Javi_MCIT_logFC))+geom_point(size=0.5,alpha=0.6)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "blue")+geom_hline(yintercept = 2, colour = "red")+xlab("logFC")+ylab("p.val")
+ggsave(filename = "javi_MCIT_volcano_plot",device = "png")
+#geom_text(data=subset(DEqMS.results_normalized_MCIT, abs(Javi_MCIT_logFC)>0.5 &-log10(Javi_MCIT_sca.P.Value)>=2),aes(Javi_MCIT_logFC, -log10(Javi_MCIT_sca.P.Value),label=Uniprot))
+```
+
+```{r}
+ggplot(DEqMS.results_normalized_SIT,aes(x=Javi_SIT_logFC,y=-log10(Javi_SIT_sca.P.Value)))+geom_point(size=0.5)+theme_bw(base_size=16)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "red")+geom_hline(yintercept = 2, colour = "red")+geom_text(data=subset(DEqMS.results_normalized_SIT, abs(Javi_SIT_logFC)>0.5 &-log10(Javi_SIT_sca.P.Value)>=2),aes(Javi_SIT_logFC, -log10(Javi_SIT_sca.P.Value),label=Uniprot))
+```
+
+
+```{r}
+ggplot(DEqMS.results_unnormalized_MCIT_mito,aes(x=logFC,y=-log10(sca.P.Value)))+geom_point(size=0.5)+theme_bw(base_size=16)+scale_color_gradient(low = "red",high = "green")+geom_vline(xintercept = c(-0.5,0.5), colour = "red")+geom_hline(yintercept = 2, colour = "red")
+```
+
+
+```{r}
+op <- par(mfrow=c(1,2), mar=c(4,4,4,1), oma=c(0.5,0.5,0.5,0))
+Residualplot(fit_3,  xlab="log2(peptide count)",main="DEqMS")+abline(h=c(-1,1),col="red")
+x = fit_3$count
+y = log(fit_2$s2.prior) - log(fit_2$sigma^2)
+plot(log2(x),y,ylim=c(-6,2),ylab="Variance(estimated-observed)", pch=20, cex=0.5,
+     xlab = "log2(peptide count)",main="Limma")+abline(h=c(-1,1),col="red")
+```
+
+
+
+```{r}
+# SEM_SIT=data.frame(sqrt(fit_2$s2.post)*fit_2$stdev.unscaled[,1])
+# SEM_MCIT=data.frame(sqrt(fit_2$s2.post)*fit_2$stdev.unscaled[,2])
+```
+
+
+```{r}
+SIT_summary=data.frame(topTable(fit_2,n=Inf,coef=1,confint = T,sort.by ="logFC" ))
+SIT_summary=merge(SIT_summary,SEM_SIT,by = 'row.names')
+SIT_summary=SIT_summary%>%rename("SEM"=ncol(.))
+```
+
+```{r}
+MCIT_summary=data.frame(topTable(fit_2,n=Inf,coef=2,confint = T,sort.by = "logFC"))
+MCIT_summary=merge(MCIT_summary,SEM_MCIT,by = 'row.names')
+MCIT_summary=MCIT_summary%>%rename("SE"=ncol(.))
+```
+
+```{r}
+DEqMS.results_normalized_MCIT=data.frame(DEqMS.results_normalized_MCIT)
+names(DEqMS.results_normalized_MCIT)=apply(X=as.matrix(names(DEqMS.results_normalized_MCIT)),MARGIN = 1,FUN=function(x){paste("Javi_MCIT",x,sep="_")})
+DEqMS.results_normalized_MCIT=DEqMS.results_normalized_MCIT%>%rename("Uniprot"=12)
+DEqMS.results_normalized_MCIT=DEqMS.results_normalized_MCIT%>%select(-Javi_MCIT_gene)
+```
+
+```{r}
+DEqMS.results_normalized_MCIT=left_join(DEqMS.results_normalized_MCIT,Mito_Gene_to_UniProt%>%select(Uniprot,Gene),by="Uniprot")
+```
+
+```{r}
+DEqMS.results_normalized_SIT=left_join(DEqMS.results_normalized_SIT,Mito_Gene_to_UniProt%>%select(Uniprot,Gene),by="Uniprot")
+```
+
+
+```{r}
+DEqMS.results_normalized_SIT=data.frame(DEqMS.results_normalized_SIT)
+names(DEqMS.results_normalized_SIT)=apply(X=as.matrix(names(DEqMS.results_normalized_SIT)),MARGIN = 1,FUN=function(x){paste("Javi_SIT",x,sep="_")})
+colnames(DEqMS.results_normalized_SIT)[12]="Uniprot"
+DEqMS.results_normalized_SIT=DEqMS.results_normalized_SIT%>%select(-Javi_SIT_gene)
+```
+
+
+# ```{r}
+# names(SIT_summary)=apply(X=as.matrix(names(SIT_summary)),MARGIN = 1,FUN=function(x){paste("Javi_SIT",x,sep="_")})
+# SIT_summary=SIT_summary%>%rename("Protein_IDs"=1)
+# ```
+# 
+# 
+# ```{r}
+# saveRDS(SIT_summary,"Javi_SIT_summary_with_limma_robust_and_trend")
+# saveRDS(MCIT_summary,"Javi_MCIT_summary_with_limma_robust_and_trend")
+# ```
+
+```{r}
+saveRDS(DEqMS.results_normalized_MCIT,"Javi_MCIT_normalized_with_DEqMS")
+saveRDS(DEqMS.results_normalized_SIT,"Javi_SIT_normalized_with_DEqMS")
+```
+
+```{r}
+
+```
+
