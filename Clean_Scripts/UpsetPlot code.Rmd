@@ -1,0 +1,438 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+`---
+title: "Untitled"
+author: "Siddharth"
+date: '2022-10-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(ComplexHeatmap)
+library(ggplot2)
+#library(tidyverse)
+library(readr)
+library(VennDiagram)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(ReactomePA)
+library(ggfortify)
+library(purrr)
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+```
+
+
+```{r}
+background_map=mapIds(org.Hs.eg.db,keys=unique(Mito_Gene_to_Uniprot$Gene),column="ENTREZID",keytype = "SYMBOL")%>%enframe()%>%drop_na()
+background_map=background_map%>%distinct(name,.keep_all = T)
+background_map=background_map%>%dplyr::rename('ENTREZID'=2)
+```
+
+
+
+```{r}
+lt_ENSEMBL = list(NVT_Granata=NVT_Granata$ENSEMBL,
+          HVT_Granata= HVT_Granata$ENSEMBL,
+          Botella_MICT= Javi_MCIT$ENSEMBL,
+          Botella_SIT=Javi_SIT$ENSEMBL,
+          Hostrup_2021=Hostrup_2021$ENSEMBL,
+          Deshmukh_2021=Deshmukh_2021$ENSEMBL,
+          Schild_2015=Schild_2015$ENSEMBL,
+          Popov_2020=Popov_2020$ENSEMBL)
+```
+
+```{r}
+m1_ENSEMBL = make_comb_mat(lt_ENSEMBL)
+m1_ENSEMBL_morethan10=m1_ENSEMBL[comb_size(m1_ENSEMBL)>=10]
+#m1=m1[comb_size(m1)>=10]
+#only_Hostrup_gene=extract_comb(m1,'00001000')
+```
+
+```{r}
+extract_list_whole=list()
+```
+
+
+```{r}
+for (i in comb_name(m1_ENSEMBL)){
+  extract_list_whole=append(extract_list_whole,list(extract_comb(m1_ENSEMBL,i)))}
+```
+
+```{r}
+names(extract_list_whole)=comb_degree(m1_ENSEMBL)
+```
+
+
+```{r}
+df_whole=enframe(extract_list_whole)
+df_whole$Code=names(comb_degree(m1_ENSEMBL))
+df_whole=df_whole%>%unnest()
+```
+
+```{r}
+#df_whole=left_join(df_whole,Mito_Gene_to_Uniprot[,c(1,2)],by='Uniprot')
+df_whole=df_whole%>%separate(Code,into=names(lt_ENSEMBL),sep=c(1:8))
+df_whole=df_whole%>%rename('Degree'='name')
+df_whole=df_whole%>%rename('ENSEMBL'="value")
+df_whole=df_whole%>%left_join(meta_analysis_table_ENSEMBL%>%select(Gene,ENSEMBL,Uniprot),by='ENSEMBL',multiple='first')
+df_whole=df_whole%>%select(Degree,Uniprot,ENSEMBL,Gene,NVT_Granata:Popov_2020)
+```
+
+```{r}
+#Get list of highly intersected proteins
+strongly_present_proteins=unlist(df_whole%>%filter(Degree>=7)%>%select(ENSEMBL))
+weakly_present_proteins=unlist(df_whole%>%filter(Degree==1)%>%select(ENSEMBL))
+```
+
+```{r}
+only_DIA_idenitifed_proteins=unlist(df_whole%>%filter(Degree==3 & Javi_MCIT==1 & Javi_SIT==1 & Hostrup_2021 ==1)%>%select(Gene))
+```
+
+
+```{r}
+# df_whole=df_whole%>%rename('Uniprot'="value")
+# df_whole=left_join(df_whole,Mito_Gene_to_Uniprot[,c(1,2)],by='Uniprot')
+# df_whole=df_whole%>%separate(Code,into=names(lt2),sep=c(1:8))
+# df_whole=df_whole%>%rename('Degree'='name')
+# df_whole=df_whole%>%select(Degree,Uniprot,Gene,NVT_Granata:Popov_2020)
+```
+
+```{r}
+# only_Hostrup_ENTREZ=mapIds(org.Hs.eg.db,keys = only_Hostrup,keytype = 'UNIPROT',column = 'ENTREZID')%>%na.omit()
+# ```
+# 
+# ```{r}
+# only_Hostrup_Reactome=enrichPathway(only_Hostrup_ENTREZ,organism = 'human',pvalueCutoff = .05,pAdjustMethod = 'BH',universe = background_map$ENTREZID,qvalueCutoff = 1,minGSSize = 5,maxGSSize = 150)
+# ```
+# 
+# ```{r}
+# only_Hostrup_GO_CC=enrichGO(only_Hostrup_,ont='CC',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map$ENTREZID)
+```
+
+
+
+
+```{r}
+png('UpSet_plot_meta_ENSEMBL.png',width = 5,height = 5,units = 'in',res = 700,bg = 'grey')
+UpSet(m1_ENSEMBL_morethan10, comb_col = "#add3e6", bg_col = c('#e8f4f8'), bg_pt_col = "#e6adbc",comb_order = order(comb_size(m1_ENSEMBL_morethan10),decreasing = T),top_annotation = upset_top_annotation(m1_ENSEMBL_morethan10, add_numbers = TRUE,annotation_name_rot = 90,axis_param=list(gp=gpar(fontsize=5))),row_names_gp = gpar(fontsize = 8),right_annotation = upset_right_annotation(m1_ENSEMBL_morethan10,width = unit(1,'cm')))
+dev.off()
+```
+
+
+```{r}
+```
+
+
+```{r}
+lt_ENSEMBL_sig=list(NVT_Granata=NVT_Granata%>%filter(NVT_Granata_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         HVT_Granata=HVT_Granata%>%filter(HVT_Granata_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Botella_MICT=Javi_MCIT%>%filter(Javi_MCIT_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Botella_SIT=Javi_SIT%>%filter(Javi_SIT_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Hostrup_2021=Hostrup_2021%>%filter(Hostrup_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Deshmukh_2021=Deshmukh_2021%>%filter(Deshmukh_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Schild_2015=Schild_2015%>%filter(Schild_2015_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Popov_2020=Popov_2020%>%filter(Popov_sca.P.Value<=0.01)%>%select(Gene)%>%unlist())
+```
+
+```{r}
+lt_Gene_sig=list(NVT_Granata=NVT_Granata%>%filter(NVT_Granata_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         HVT_Granata=HVT_Granata%>%filter(HVT_Granata_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Botella_MICT=Javi_MCIT%>%filter(Javi_MCIT_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Botella_SIT=Javi_SIT%>%filter(Javi_SIT_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Hostrup_2021=Hostrup_2021%>%filter(Hostrup_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Deshmukh_2021=Deshmukh_2021%>%filter(Deshmukh_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Schild_2015=Schild_2015%>%filter(Schild_2015_sca.P.Value<=0.01)%>%select(Gene)%>%unlist(),
+         Popov_2020=Popov_2020%>%filter(Popov_sca.P.Value<=0.01)%>%select(Gene)%>%unlist())
+```
+
+
+```{r}
+m2_ENSEMBL=make_comb_mat(lt_ENSEMBL_sig)
+```
+
+```{r}
+#m2_Gene=make_comb_mat(lt_Gene_sig)
+```
+
+
+```{r}
+#extract_list_sig=list()
+extract_list_sig_gene=list()
+```
+
+
+```{r}
+for (i in comb_name(m2_ENSEMBL)){
+  extract_list_sig=append(extract_list_sig,list(extract_comb(m2_ENSEMBL,i)))}
+```
+
+
+```{r}
+names(extract_list_sig)=comb_degree(m2_ENSEMBL)
+#names(extract_list_sig_gene)=comb_degree(m2_Gene)
+```
+
+```{r}
+df_sig=enframe(extract_list_sig)
+df_sig$Code=names(comb_degree(m2_ENSEMBL))
+df_sig=df_sig%>%unnest()
+```
+
+```{r}
+#df_sig_Gene=enframe(extract_list_sig_gene)
+#df_sig_Gene$Code=names(comb_degree(m2_Gene))
+#df_sig_Gene=df_sig_Gene%>%unnest()
+```
+
+```{r}
+# df_Uniprot=enframe(extract_list)
+# df_Uniprot$Code=names(comb_degree(m2))
+# df_Uniprot=df_Uniprot%>%unnest()
+```
+
+
+```{r}
+df_sig=df_sig%>%separate(Code,into=names(lt_ENSEMBL_sig),sep=c(1:8))
+df_sig=df_sig%>%rename('Degree'='name')
+df_sig=df_sig%>%rename('ENSEMBL'="value")
+df_sig=df_sig%>%left_join(meta_analysis_table_ENSEMBL%>%select(Gene,ENSEMBL,Uniprot),by='ENSEMBL',multiple='first')
+df_sig=df_sig%>%select(Degree,Uniprot,ENSEMBL,Gene,NVT_Granata:Popov_2020)
+```
+
+```{r}
+#df_sig_Gene=df_sig_Gene%>%separate(Code,into=names(lt_Gene_sig),sep=c(1:8))
+#df_sig_Gene=df_sig_Gene%>%rename('Degree'='name')
+#df_sig_gene=df_sig_gene%>%rename('ENSEMBL'="value")
+#df_sig_gene=df_sig_gene%>%left_join(meta_analysis_table_ENSEMBL%>%select(Gene,ENSEMBL,Uniprot),by='ENSEMBL',multiple='first')
+#df_sig_gene=df_sig_gene%>%select(Degree,Uniprot,ENSEMBL,Gene,NVT_Granata:Popov_2020)
+```
+
+```{r}
+m2_ENSEMBL=m2_ENSEMBL[comb_size(m2_ENSEMBL)>2]
+#UpSet(m2[comb_degree(m2)>5])
+```
+
+```{r}
+png('UpSet_plot_meta_significant_ENSEMBL.png',width = 5,height = 5,units = 'in',res = 700,bg = 'grey')
+UpSet(m2_ENSEMBL, comb_col = "#add3e6", bg_col = c('#e8f4f8'), bg_pt_col = "#e6adbc",comb_order = order(comb_size(m2_ENSEMBL),decreasing = T),top_annotation = upset_top_annotation(m2_ENSEMBL, add_numbers = TRUE,annotation_name_rot = 90,axis_param=list(gp=gpar(fontsize=5))),row_names_gp = gpar(fontsize = 8),right_annotation = upset_right_annotation(m2_ENSEMBL,width = unit(1,'cm')))
+dev.off()
+```
+
+
+```{r}
+hist(five_or_more%>%filter(p_adj<0.05)%>%select(LogFC)%>%unlist(),breaks = 20)
+```
+
+```{r}
+hist(meta_analysis_table_ENSEMBL$LogFC,freq = F,ylim = c(0,3),xlab = 'Log2FC',main = 'Histogram of LogFCs',breaks = 15,xlim=c(-1,1),xaxt='n')#Create histogram
+lines(density(meta_analysis_table_ENSEMBL$LogFC),lwd=2,col='red')
+axis(1,at=seq(-1,1,0.2))
+```
+
+```{r}
+png(filename = 'Boxplot per study.png',width = 6,height = 5,units = 'in',res = 800)
+ggplot(data = summary_meta_ENSEMBL)+geom_boxplot(aes(y=NVT_Granata_logFC,x='Granata_NVT'),na.rm = T)+geom_boxplot(aes(y=HVT_Granata_logFC,x='Granata_HVT'),na.rm = T)+geom_boxplot(aes(y=Deshmukh_logFC,x='Deshmukh_2021'),na.rm = T)+geom_boxplot(aes(y=Hostrup_logFC,x='Hostrup_2021'),na.rm = T)+geom_boxplot(aes(y=Javi_MCIT_logFC,x='Botella_MICT'),na.rm = T)+geom_boxplot(aes(y=Javi_SIT_logFC,x='Botella_SIT'),na.rm = T)+geom_boxplot(aes(y=Schild_2015_logFC,x='Schild_2015'),na.rm = T)+geom_boxplot(aes(y=Popov_logFC,x='Popov_2020'),na.rm = T)+ylim(-1,1)+ylab('Log2FC')+xlab('Study')+scale_x_discrete(limits=c('Botella_SIT','Granata_NVT','Botella_MICT','Hostrup_2021','Granata_HVT','Deshmukh_2021','Schild_2015','Popov_2020'))+theme_minimal()+theme(axis.text.x = element_text(size=7),axis.title.y = element_text(size=8),axis.title.x = element_text(size=8))
+dev.off()
+```
+
+
+
+```{r}
+#identified_all=identified_all%>%rename("I_square"='Heterogenity Score (I^2)')
+identified_all%>%ggplot(aes(x=reorder(Gene,I_square),y=I_square))+geom_point()+theme(axis.text.x = element_blank())
+```
+
+```{r}
+#meta_analysis_table_mult=meta_analysis_table_mult%>%rename('I_square'=6)
+```
+
+```{r}
+het_ridge_plot=meta_mult%>%ggplot(aes(x=`Heterogenity Score (I^2)`,y=as.factor(`Num. Studies`)))+geom_density_ridges(fill='#FF6D6A',alpha=.6)+geom_point(alpha=0.4,shape=20,size=.5,col='black',position=position_jitter(w=0,h=0.1))+ylab('Number of studies')+xlab('I^2 percentage') + theme_minimal()#theme(axis.text.x = element_blank())
+```
+
+```{r}
+ggsave(het_ridge_plot,filename = 'Hetero ridge plot.png',device = 'png',width = 5,height = 5,units = 'in',dpi = 320,bg='white')
+```
+
+
+```{r}
+#meta_analysis_table_mult%>%ggplot(aes(x=I_square,y=p_adj))+geom_point()
+```
+
+
+
+```{r}
+png(filename = 'Distribution of heterogenity scores.png',width = 5,height = 5,units = 'in',res=600)
+ggplot(meta_FiveOrMore,aes(x=`Heterogenity Score (I^2)`)) + 
+  geom_histogram(colour = 1, fill = "white",binwidth = 5) +
+  geom_density(aes(y=after_stat(count)*2),lwd=.5,colour="#D4F0F0",fill=4,alpha=.2) + xlab('I^2 values')+ ylab('Number of proteins')+ theme_minimal() + theme(text = element_text(size = 7))
+dev.off()
+```
+
+
+```{r}
+DDA_proteins=Reduce(function(x,y) union(x = x, y = y),list(unlist(NVT_Granata$ENSEMBL),unlist(Deshmukh_2021$ENSEMBL),unlist(Schild_2015$ENSEMBL)))
+DIA_proteins=Reduce(function(x,y) union(x = x, y = y),list(unlist(Javi_MCIT$ENSEMBL),unlist(Hostrup_2021$ENSEMBL)))
+```
+
+```{r}
+venn.diagram(x=list(DDA_proteins,DIA_proteins),filename = 'Test_venn_2.png',category.names = c('DDA proteins','DIA proteins'),lty='dashed',fill = c(alpha("#440154ff",0.3), alpha('#fde725ff',0.3)),cat.dist=c(0.02,0.02),cat.cex=.2,cex=.4,imagetype="png" ,height = 600 ,width = 600,lwd=.5)
+```
+
+```{r}
+Unique_DIA=setdiff(DIA_proteins,DDA_proteins)
+Unique_DIA_Uniprot=unlist(meta_analysis_table_ENSEMBL%>%filter(ENSEMBL %in% Unique_DIA)%>%select(Uniprot))
+Unique_DIA_Uniprot=identified_df_IMPI%>%filter(Uniprot %in% Unique_DIA_Uniprot)
+```
+
+```{r}
+identified_all_sig=identified_all%>%filter(p_adj<=0.05)
+rownames(identified_all_sig)=identified_all_sig$Gene
+```
+
+```{r}
+Heatmap_df=summary_meta_ENSEMBL%>%select(contains('logFC'))
+Heatmap_df=Heatmap_df[rownames(identified_all%>%filter(sig=='+')),]
+rownames(Heatmap_df)=identified_all[rownames(Heatmap_df),"Gene"]
+Heatmap_df=Heatmap_df%>%select(-Popov_logFC)
+```
+
+```{r}
+Heatmap_long=Heatmap_df%>%rownames_to_column('Gene')%>%gather('Study','Value',-Gene)
+Heatmap_long=Heatmap_long%>%group_by(Gene)%>%mutate(Z_score=scale(Value))
+Heatmap_long=Heatmap_long%>%ungroup()
+Heatmap_wider=data.frame(Heatmap_long%>%pivot_wider(names_from = 'Study',values_from = 'Z_score',id_cols = 'Gene'))
+Heatmap_wider=Heatmap_wider%>%column_to_rownames('Gene')
+#Heatmap_wider$Gene=meta_analysis_table_ENSEMBL[rownames(Heatmap_wider),'Gene']
+#rownames(Heatmap_wider)=Heatmap_wider$Gene
+#Heatmap_wider=Heatmap_wider%>%select(-Gene)
+Heatmap_wider=Heatmap_wider%>%select(NVT_Granata_logFC,Javi_SIT_logFC,Hostrup_logFC,HVT_Granata_logFC,Javi_MCIT_logFC,Deshmukh_logFC,Schild_2015_logFC)
+```
+
+```{r}
+structure <- dist(as.matrix(Heatmap_wider), method = "euclidean")
+hc <- hclust(structure, method = "average")
+row_dend=dendsort(hc)
+#dend <- as.dendrogram(hc)
+
+#my_cols=c("Pre"="light yellow","Post"="light green")
+png('Test_heatmap_final.png',width = 7,height = 7,units = 'in',res=500)
+Heatmap(as.matrix(Heatmap_wider),column_order = colnames(Heatmap_wider),show_row_names = T,row_names_gp = gpar(fontsize=4),show_column_names = T,column_names_gp = gpar(fontsize=6),cluster_columns = F,height = unit(5,'in'),width = unit(5,'in'),cluster_rows = row_dend,column_labels = c('NVT_Granata (210)','Botella_SIT (250)','Hostrup_2021 (430)','HVT_Granata (1980)','Botella_MICT (2150)','Deshmukh_2021 (3400)','Schild_2015 (>)'),name = 'z-score',column_names_rot = 45)
+dev.off()
+```
+
+
+```{r}
+hetergoeneous_proteins=meta_FiveOrMore%>%filter(`Heterogenity Score (I^2)`>=85 & `Num. Participants`==59 & `Num. Studies`==7 & QE_Padj<0.05)
+```
+
+```{r}
+low_het=meta_FiveOrMore%>%filter(`Heterogenity Score (I^2)`==0 & sig=="+" & `Num. Studies`>6 & `Num. Participants`==59)
+```
+
+
+```{r}
+line_plot_df_high=summary_meta_ENSEMBL%>%filter(Uniprot %in% rownames(hetergoeneous_proteins))%>%select(contains('logFC'),contains('SEM'))
+#line_plot_df=line_plot_df[rownames(low_het),]
+line_plot_df_high$Gene=meta_analysis_table_ENSEMBL[(rownames(line_plot_df_high)),"Gene"]
+line_plot_df_high=line_plot_df_high%>%select(contains('logFC'),Gene)
+line_plot_df_high=line_plot_df_high%>%gather('Study','FC',-Gene)
+line_plot_df_high=line_plot_df_high%>%filter(!grepl('Popov',Study))
+```
+
+```{r}
+line_plot_df_low=summary_meta_ENSEMBL%>%filter(Uniprot %in% rownames(low_het))%>%select(contains('logFC'),contains('SEM'))
+#line_plot_df=line_plot_df[rownames(low_het),]
+line_plot_df_low$Gene=meta_analysis_table_ENSEMBL[(rownames(line_plot_df_low)),"Gene"]
+line_plot_df_low=line_plot_df_low%>%select(contains('logFC'),Gene)
+line_plot_df_low=line_plot_df_low%>%gather('Study','FC',-Gene)
+line_plot_df_low=line_plot_df_low%>%filter(!grepl('Popov',Study))
+```
+
+
+```{r}
+cols=colorRampPalette(brewer.pal(7,'Set2'))(11)
+```
+
+
+```{r}
+high_het_plot=ggplot(line_plot_df_high,aes(x=Study,y=FC,color=Gene,fill=Gene,group=Gene))+geom_line(alpha=.5)+geom_point(alpha=.5,shape='triangle')+scale_x_discrete(limits=c('NVT_Granata_logFC','Javi_SIT_logFC','Hostrup_logFC','HVT_Granata_logFC','Javi_MCIT_logFC','Deshmukh_logFC','Schild_2015_logFC'),labels=c('NVT_Granata (210)','Botella_SIT (250)','Hostrup_2021 (430)','HVT_Granata (1980)','Botella_MICT (2150)','Deshmukh_2021 (3400)','Schild_2015 (>)'))+ylab('Log2 fold change')+theme_minimal()+ylim(c(-1,NA))+theme(axis.text.x = element_text(size=5),axis.title = element_text(size=8),legend.text = element_text(size=5))
+```
+
+```{r}
+low_het_plot=ggplot(line_plot_df_low,aes(x=Study,y=FC,color=Gene,fill=Gene,group=Gene))+geom_line(alpha=.5)+geom_point(alpha=.5,shape='triangle')+scale_x_discrete(limits=c('NVT_Granata_logFC','Javi_SIT_logFC','Hostrup_logFC','HVT_Granata_logFC','Javi_MCIT_logFC','Deshmukh_logFC','Schild_2015_logFC'),labels=my_labels)+ylab('Log2 fold change')+ylim(c(-1,NA))+theme_minimal()+theme(axis.text.x = element_text(size=5),axis.title = element_text(size=8),legend.text = element_text(size=5))
+```
+
+
+
+
+```{r}
+ggsave(high_het_plot,filename = 'High het proteins plot final.png',device = 'png',width = 6,height = 4,units = 'in',dpi = 320,bg = 'white')
+```
+
+```{r}
+ggsave(low_het_plot,filename = 'Low het proteins plot final.png',device = 'png',width = 6,height = 4,units = 'in',dpi = 320,bg = 'white')
+```
+
+
+```{r}
+meta_volcano_plot=EnhancedVolcano(meta_analysis_table_ENSEMBL,x="LogFC",y="adj.P",lab =meta_analysis_table_ENSEMBL$Gene, pCutoff = 0.05,FCcutoff = 0.3,colAlpha = 0.5,pointSize = 1.5,shapeCustom = keyvals,title="Meta-analysis results",titleLabSize = 12,axisLabSize = 8,xlim = c(-1,1),ylim=c(0,10),drawConnectors = T,labSize = 2,subtitle = "",legendIconSize = 6,legendLabSize = 6)
+```
+
+```{r}
+png(filename = 'Meta_volcano_plot.png',width = 6,height = 6,units = 'in',res = 300,bg = 'white')
+plot(meta_volcano_plot)
+dev.off()
+```
+
+```{r}
+pie_df=data.frame(label=c('Number of Proteins','in >5 datasets',' significant at p_adjust  (>5)','in all datasets','significant at p_adjust (8)'),num=x)
+#pie_df <- pie_df%>%mutate(prop = num / sum(pie_df$num) *100) %>%mutate(ypos = cumsum(prop)- 0.5*prop )
+```
+# ```
+#
+```{r}
+pie_plot=ggplot(pie_df,aes(x='',y=num,fill=factor(label,levels = c('Number of Proteins','in >5 datasets',' significant at p_adjust  (>5)','in all datasets','significant at p_adjust (8)'))))+geom_bar(width = 1,stat='identity')+theme_minimal()
+```
+
+```{r}
+pie_plot=ggplot(pie_df,aes(x=label,y=num))+geom_col(fill='#D4F0F0',width=.7)+scale_x_discrete(limits=c('Number of Proteins','in >5 datasets',' significant at p_adjust  (>5)','in all datasets','significant at p_adjust (8)'))+xlab('Category')+ylab('Number of Proteins')+theme_minimal()+theme(axis.text = element_text(size=6))
+```
+
+```{r}
+ggsave(pie_plot,filename = 'Barplot of study numbers.png',device = 'png',width = 5,height = 5,units = 'in',dpi = 320,bg='white')
+```
+
+

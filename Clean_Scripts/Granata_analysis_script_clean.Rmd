@@ -1,0 +1,326 @@
+---
+title: "Granata_analysis_script_clean"
+author: "Siddharth"
+date: '2023-03-13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+#load libraries
+library(readxl)
+library(impute)
+library(imputeLCMD)
+library(vsn)
+library(limma)
+library(ggplot2)
+library(ggfortify)
+library(DEqMS)
+library(matrixStats)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(tidyverse)
+library(dplyr)
+```
+
+```{r}
+#load data
+#data1<-data.frame(read_excel("Gra",sheet = "All proteins linear intensity"))
+```
+
+```{r}
+
+#IMPI_annotation=read_excel("../Proteomics with DeQMS/impi-2021-q4pre-20211001-dist_0.xlsx",sheet = 2)
+```   
+
+```{r}
+#Mito_stuff=IMPI_annotation%>%filter(!is.na(MitoCarta3.0)|(str_detect(`IMPI Class`,"Verified"))|(str_detect(`IMPI Class`,"Associated|Ancilliary") & str_detect(`IMPI SVM Prediction`,"High")))
+```
+
+```{r}
+# Mito_stuff=Mito_stuff%>%separate_rows(Symbol,sep=";")
+# Mito_stuff$Symbol=sapply(Mito_stuff$Symbol,FUN = str_trim)
+# write_tsv(Mito_stuff%>%distinct(Symbol,.keep_all = T)%>%dplyr::select(Symbol),file = "MitoGenes")
+```
+
+
+```{r}
+#Load file
+df.prot=data.frame(read_tsv("proteinGroups_Granata.txt"))
+```
+
+```{r}
+#Load Gene Name to Uniprot name (and vice-versa) conversion file
+Mito_Gene_to_UniProt=readxl::read_excel("../Gene_to_Uniprot.xlsx")
+Mito_Gene_to_UniProt=Mito_Gene_to_UniProt%>%dplyr::rename("Uniprot"="Entry","Gene"="From")
+```
+
+```{r}
+#ENSEMBL_to_Uniprot=readxl::read_excel("../Proteomics with DeQMS/ENSEMBL_to_Uniprot.xlsx")
+```
+
+
+```{r}
+#Remove proteins from the dataset who meet any of these criteria
+df.prot = df.prot%>%filter(is.na(Reverse) & is.na(Potential.contaminant) & is.na(Only.identified.by.site))
+#Add identification variable to rows 
+rownames(df.prot)=as.character(c(1:nrow(df.prot)))
+df.prot$id=as.character(c(1:nrow(df.prot)))
+```
+
+```{r}
+#Create peptide count column to keep for use in DeqMS analysis
+df.prot$Peptide_count=rowMins(as.matrix(df.prot%>%dplyr::select(contains("Razor...unique.peptides."))))
+df.prot$Peptide_count=df.prot$Peptide_count+1
+#hist(df.prot[df.prot$Q.value<=0.5,"Q.value"])
+```
+
+
+```{r}
+#Create 'Mitochondria-only' dataframe
+mito_data=data.frame(df.prot%>%separate_rows(Majority.protein.IDs,sep=";")%>%filter(Majority.protein.IDs %in% Mito_Gene_to_UniProt$Uniprot))
+#Split on protein IDs when there are multiple protein ids for each row and only keep retain one of them in the data
+mito_data=mito_data%>%distinct(id,.keep_all = T)%>%select(id,Majority.protein.IDs,contains("LFQ"),Peptide_count)
+rownames(mito_data)=mito_data$id
+#Select only rows containing mitochondria intensity values
+mito_intensities=mito_data%>%select(contains("LFQ"))
+#Replace 0s with NAs
+mito_intensities[mito_intensities==0]<-NA
+#Filter out rows with higher than 35% missing values
+mito_intensities=mito_intensities%>%filter(rowMeans(is.na(mito_intensities))<=0.35)
+```
+
+
+```{r}
+#Create a df with intensities of all proteins in the dataset
+whole_prot_intensities=df.prot%>%dplyr::select(contains("LFQ"))
+whole_prot_intensities[whole_prot_intensities==0]<-NA
+```
+
+```{r}
+selected_row_indices=model.Selector(as.matrix(whole_prot_intensities))
+sum(selected_row_indices[[1]])
+```
+
+
+```{r}
+#Filter out proteins with more than 35% missing values
+whole_prot_intensities=whole_prot_intensities%>%filter(rowMeans(is.na(whole_prot_intensities))<=0.35)
+```
+
+```{r}
+#Rename column names to reflect the experiment group status
+mito_biorep_names <- str_match(colnames(mito_intensities),"[0-9]+[A-Z]..[0-9]_[A-Z]")[,1]
+mito_biorep_names <- str_replace(mito_biorep_names, ".1_", "_BL_")
+mito_biorep_names <- str_replace(mito_biorep_names, ".2_", "_NTV_")
+mito_biorep_names <- str_replace(mito_biorep_names, ".5_", "_HTV_")
+mito_biorep_names <- str_replace(mito_biorep_names, ".8_", "_RTV_")
+```
+
+```{r}
+#Rename column names to reflect the experiment group status
+colnames(whole_prot_intensities)=mito_biorep_names
+colnames(mito_intensities)=mito_biorep_names
+```
+
+```{r}
+#Impute and normalize all remaining protein data
+whole_prot_intensities_knn=impute.knn(as.matrix(whole_prot_intensities))$data
+whole_prot_intensities_VSN=data.frame(normalizeVSN(whole_prot_intensities_knn))
+whole_prot_intensities_log=data.frame(log2(whole_prot_intensities_knn))
+```
+
+```{r}
+meanSdPlot(as.matrix(whole_prot_intensities_VSN))
+```
+
+```{r}
+meanSdPlot(as.matrix(whole_prot_intensities_log))
+```
+
+
+```{r}
+#Impute and normalize all remining mitochondria intensity data
+mito_intensities=impute.knn(as.matrix(mito_intensities))$data
+mito_intensities=data.frame(mito_intensities)
+mito_intensities_vsn=data.frame(normalizeVSN(mito_intensities))
+```
+
+```{r}
+#create factors
+mito_anno_samples <- str_match(colnames(whole_prot_intensities), pattern = "([0-9]*[A-Z]*)_([A-Z]*)_([A-Z])")[,2:4]
+colnames(mito_anno_samples)=c("subject","group","batch")
+mito_anno_samples=data.frame(mito_anno_samples)
+factor.group=factor(mito_anno_samples$group)
+factor.replicate=factor(mito_anno_samples$subject)
+factor.batch=factor(mito_anno_samples$batch)
+```
+
+
+```{r}
+#create design matrix
+design_2<- model.matrix(~0+factor.group+factor.batch)
+colnames(design_2)=gsub('.*\\.', '', colnames(design_2))
+```
+
+```{r}
+corfit <- duplicateCorrelation(whole_prot_intensities, design_2, block = factor.replicate)
+```
+
+```{r}
+design_with_replicate_factor<- model.matrix(~0+factor.group+factor.batch+factor.replicate)
+colnames(design_with_replicate_factor)=gsub('.*\\.', '', colnames(design_with_replicate_factor))
+```
+
+```{r}
+#Create lmfit object with limma
+fit_2<-limma::lmFit(whole_prot_intensities_log,design_with_replicate_factor)
+#Create contrast_matrix
+contrast.matrix_2 <- makeContrasts(Normal_volume= groupNTV-groupBL, High_volume=groupHTV-groupNTV,Basline_to_High=groupHTV-groupBL,levels=design_with_replicate_factor)
+#Create ebayes contrast object
+fit_3<- eBayes(contrasts.fit(fit_2, contrast.matrix_2))
+#Add peptide count data to ebayes object
+fit_3$count=df.prot[rownames(fit_3$coefficients),"Peptide_count"]
+#Create new fit object with peptide count information 
+fit_4=spectraCounteBayes(fit_3)
+```
+
+
+```{r}
+#Output results of contrast 
+DEqMS.results_unnormalized_NVT= outputResult(fit_4,coef_col = 1)
+DEqMS.results_unnormalized_HVT=outputResult(fit_4,coef_col = 2)
+DEqMS.results_unnormalized_BL_to_HVT=outputResult(fit_4,coef_col = 3)
+```
+
+```{r}
+#Calculate standard errors of mean
+SEM_NVT=data.frame(sqrt(fit_4$sca.postvar)*fit_4$stdev.unscaled[,1])
+SEM_HVT=data.frame(sqrt(fit_4$sca.postvar)*fit_4$stdev.unscaled[,2])
+#SEM_HVT_BL=data.frame(sqrt(fit_4$sca.postvar)*fit_4$stdev.unscaled[,3])
+```
+
+```{r}
+#Create final table with protein names, gene names and standard error of means for the NVT v. BL contrast 
+DEqMS.results_unnormalized_NVT$SEM=SEM_NVT[rownames(DEqMS.results_unnormalized_NVT),1]
+DEqMS.results_unnormalized_NVT_mito_knn_10=DEqMS.results_unnormalized_NVT[rownames(mito_intensities),]
+DEqMS.results_unnormalized_NVT_mito_knn_10$Uniprot=mito_data[rownames(DEqMS.results_unnormalized_NVT_mito_knn_10),"Majority.protein.IDs"]
+DEqMS.results_unnormalized_NVT_mito_knn_10=merge(DEqMS.results_unnormalized_NVT_mito_knn_10,Mito_Gene_to_UniProt[,c(1:2)],by="Uniprot")
+```
+
+```{r}
+#Create final table with protein names, gene names and standard error of means for the HVT v. NVT contrast 
+
+DEqMS.results_unnormalized_HVT$SEM=SEM_HVT[rownames(DEqMS.results_unnormalized_HVT),]
+DEqMS.results_unnormalized_HVT_mito_knn_10=DEqMS.results_unnormalized_HVT[rownames(mito_intensities),]
+DEqMS.results_unnormalized_HVT_mito_knn_10$Uniprot=mito_data[rownames(DEqMS.results_unnormalized_HVT_mito_knn_10),"Majority.protein.IDs"]
+DEqMS.results_unnormalized_HVT_mito_knn_10=merge(DEqMS.results_unnormalized_HVT_mito_knn_10,Mito_Gene_to_UniProt[,c(1:2)],by="Uniprot")
+```
+
+```{r}
+#Create output table for the BL to HVT contrast
+DEqMS.results_unnormalized_BL_to_HVT_mito_knn_10=DEqMS.results_unnormalized_BL_to_HVT[rownames(mito_intensities),]
+DEqMS.results_unnormalized_BL_to_HVT_mito_knn_10$Uniprot=mito_data[rownames(DEqMS.results_unnormalized_BL_to_HVT_mito_knn_10),"Majority.protein.IDs"]
+DEqMS.results_unnormalized_BL_to_HVT_mito_knn_10=merge(DEqMS.results_unnormalized_BL_to_HVT_mito_knn_10,Mito_Gene_to_UniProt[,c(1:2)],by="Uniprot")
+```
+
+```{r}
+#Add custom labels to column names
+DEqMS.results_unnormalized_NVT_mito_knn_10=DEqMS.results_unnormalized_NVT_mito_knn_10%>%select(Gene,Uniprot,logFC:SEM,-gene)
+names(DEqMS.results_unnormalized_NVT_mito_knn_10)=apply(X=as.matrix(names(DEqMS.results_unnormalized_NVT_mito_knn_10)),MARGIN = 1,FUN=function(x){paste("NVT_Granata",x,sep="_")})
+DEqMS.results_unnormalized_NVT_mito_knn_10=DEqMS.results_unnormalized_NVT_mito_knn_10%>%rename("Uniprot"=2,"Gene"=1)
+```
+
+```{r}
+#Add custom labels to column names
+DEqMS.results_unnormalized_HVT_mito_knn_10=DEqMS.results_unnormalized_HVT_mito_knn_10%>%select(Gene,Uniprot,logFC:SEM,-gene)
+names(DEqMS.results_unnormalized_HVT_mito_knn_10)=apply(X=as.matrix(names(DEqMS.results_unnormalized_HVT_mito_knn_10)),MARGIN = 1,FUN=function(x){paste("HVT_Granata",x,sep="_")})
+DEqMS.results_unnormalized_HVT_mito_knn_10=DEqMS.results_unnormalized_HVT_mito_knn_10%>%rename("Uniprot"=2,"Gene"=1)
+```
+
+```{r}
+#Add column with FDR adjusted P-values to results dataframe
+DEqMS.results_unnormalized_NVT_mito_knn_10$NVT_Granata_padjust2=p.adjust(DEqMS.results_unnormalized_NVT_mito_knn_10$NVT_Granata_sca.P.Value,method="BH")
+DEqMS.results_unnormalized_HVT_mito_knn_10$HVT_Granata_padjust2=p.adjust(DEqMS.results_unnormalized_HVT_mito_knn_10$HVT_Granata_sca.P.Value,method="BH")
+```
+
+
+```{r}
+##Run DE analysis for mitochondria normalised data
+
+#Create lmfit object with limma
+fit_2<-limma::lmFit(mito_intensities_vsn,design_with_replicate_factor)
+#Create contrast_matrix
+contrast.matrix_2 <- makeContrasts(Normal_volume= groupNTV-groupBL, High_volume=groupHTV-groupNTV,Basline_to_High=groupHTV-groupBL,levels=design_with_replicate_factor)
+#Create ebayes contrast object
+fit_3<- eBayes(contrasts.fit(fit_2, contrast.matrix_2))
+#Add peptide count data to ebayes object
+fit_3$count=df.prot[rownames(fit_3$coefficients),"Peptide_count"]
+#Create new fit object with peptide count information 
+fit_4=spectraCounteBayes(fit_3)
+```
+
+
+```{r}
+#Output results of contrasts for mito-normalised data
+Norm_out_NVT= outputResult(fit_4,coef_col = 1)
+Norm_out_HVT=outputResult(fit_4,coef_col = 2)
+Norm_out_BL_to_HVT=outputResult(fit_4,coef_col = 3)
+```
+
+```{r}
+#Add UniprotID information
+Norm_out_NVT$Uniprot=mito_data[rownames(Norm_out_NVT),"Majority.protein.IDs"]
+Norm_out_NVT=merge(Norm_out_NVT,Mito_Gene_to_UniProt[,c(1:2)],by="Uniprot")
+```
+
+```{r}
+#Add UniprotID information
+Norm_out_HVT$Uniprot=mito_data[rownames(Norm_out_HVT),"Majority.protein.IDs"]
+Norm_out_HVT=merge(Norm_out_HVT,Mito_Gene_to_UniProt[,c(1:2)],by="Uniprot")
+```
+
+```{r}
+#Add UniprotID information
+Norm_out_BL_to_HVT$Uniprot=mito_data[rownames(Norm_out_BL_to_HVT),"Majority.protein.IDs"]
+Norm_out_BL_to_HVT=merge(Norm_out_BL_to_HVT,Mito_Gene_to_UniProt[,c(1:2)],by="Uniprot")
+```
+
+```{r}
+#Save results to RDS file
+saveRDS(Norm_out_NVT,file = "Mito_norm_NVT_final")
+saveRDS(Norm_out_HVT,file = "Mito_norm_HVT_final")
+saveRDS(Norm_out_BL_to_HVT,file = "Mito_norm_HVT(BL)_final")
+```
+
+
+```{r}
+#Save results to RDS file
+saveRDS(DEqMS.results_unnormalized_NVT_mito_knn_10,'Granata_NVT_unnorm_final_result')
+saveRDS(DEqMS.results_unnormalized_HVT_mito_knn_10,'Granata_HVT_unnorm_final_result')
+saveRDS(DEqMS.results_unnormalized_BL_to_HVT_mito_knn_10,'Granata_HVT(BL)_unnorm_final_result')
+```
+

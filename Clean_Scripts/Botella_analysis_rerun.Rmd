@@ -1,0 +1,330 @@
+---
+title: "Proteomics_analysis_with_limma_Javi"
+author: "Siddharth"
+date: '2022-05-27'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+```{r}
+rm(list=ls())
+```
+
+
+```{r}
+#load libraries
+library(readxl)
+library(impute)
+library(vsn)
+library(limma)
+library(purrr)
+library(ggplot2)
+library(ggfortify)
+library(reshape)
+library(heatmaply)
+library(DEqMS)
+```
+
+```{r}
+#Load libraries
+library(dplyr)
+library(tidyverse)
+```
+
+
+```{r}
+#load data
+javi_data=read_xlsx(path = "../Proteomics with DeQMS/Javi_DIA_Proteomics.xlsx")
+```
+
+```{r}
+# Mito_UniProt=read_xlsx("Proteomics with DeQMS/uniprot-download_true_fields_accession_2Creviewed_2Cid_2Cprotein_nam-2022.08.13-16.22.18.59.xlsx")
+#load updated mitocarta database
+#IMPI_annotation=read_excel("Sample Enrichment Analysis/impi-2021-q4pre-20211001-dist_0.xlsx",sheet = 2)
+#Mitocarta=read_excel("Human.MitoCarta3.0.xls",sheet = "C MitoPathways")
+#Mitocarta$Genes=sapply(Mitocarta$Genes%>%strsplit(.,","),FUN = str_trim)
+#Sid_mito=data.frame(readRDS("Sid_mito_proteins"))
+```
+
+```{r}
+#Load gene to uniprot annotation file
+Mito_Gene_to_UniProt=readxl::read_xlsx("../Gene_to_Uniprot.xlsx")
+Mito_Gene_to_UniProt=Mito_Gene_to_UniProt%>%rename(c("Uniprot"="Entry","Gene"="From"))
+```
+
+```{r}
+# Oxphos_genes=Mitocarta%>%filter(MitoPathway=="OXPHOS")%>%dplyr::select(Genes)
+# Oxphos_genes=unlist(Oxphos_genes$Genes)
+```
+
+
+```{r}
+# Mito_stuff=IMPI_annotation%>%filter(`IMPI Class`!="Unclassified")
+# Mito_stuff=Mito_stuff%>%filter(str_detect(`IMPI Class`,"Verified")|(str_detect(`IMPI Class`,"Associated|Ancilliary")) & str_detect(`IMPI SVM Prediction`,"High")|!(is.na(MitoCarta3.0)))
+```
+
+```{r}
+#Select relevant columns from the dataframe
+javi_data=javi_data%>%dplyr::select(PG.Genes,PG.ProteinGroups,contains("StrippedSequences"),contains("MS2Quantity"))
+javi_data=javi_data%>%mutate_at(vars(contains("MS2Quantity")),as.numeric)
+```
+
+```{r}
+#Filter out rows with more than 35% missing values
+javi_data=javi_data%>%filter(rowMeans(is.na(javi_data%>%dplyr::select(contains("MS2Quantity"))))<=0.35)
+#Add id column to keep track of rows when splitting
+javi_data$id=as.character(c(1:nrow(javi_data)))
+javi_data=data.frame(javi_data)
+rownames(javi_data)=javi_data$id
+```
+
+```{r}
+#Create column to keep track of peptide count values
+javi_data$peptide_count=rowMins(as.matrix(javi_data%>%select(contains("StrippedSequences"))))
+javi_data$peptide_count=javi_data$peptide_count+1
+```
+
+
+```{r}
+#Create dataframe with mitochondria protein intensities
+mito_intensities=data.frame(javi_data%>%separate_rows(PG.ProteinGroups,sep=";")%>%filter(PG.ProteinGroups %in% Mito_Gene_to_UniProt$Uniprot))
+mito_intensities=mito_intensities%>%distinct(id,.keep_all = T)%>%select(id,contains("MS2Quantity"))
+rownames(mito_intensities)=mito_intensities$id
+mito_intensities=mito_intensities%>%select(-id)
+#mito_anno_samples=data.frame(strsplit2(mito_anno_samples$X6,split = ".",f))
+```
+
+
+```{r}
+#Change column names
+mito_anno_samples <- data.frame(strsplit2(colnames(mito_intensities),split = "[_|.]"))
+colnames(mito_intensities)=mito_anno_samples$X9
+```
+
+```{r}
+#Create dataframe with all protein intensities
+whole_intensities=data.frame(javi_data%>%select(contains("MS2Quantity")))
+mito_anno_samples <- data.frame(strsplit2(colnames(whole_intensities),split = "[_|.]"))
+colnames(whole_intensities)=mito_anno_samples$X9
+```
+
+```{r}
+#Impute and normalize mitochondria protein intensities
+mito_intensities=impute.knn(as.matrix(mito_intensities))$data
+mito_intensities_VSN=data.frame(normalizeVSN(mito_intensities))
+```
+
+```{r}
+#Impute and normalize whole protein intensities
+whole_intensities=impute.knn(as.matrix(whole_intensities))$data
+whole_intensities_VSN=data.frame(normalizeVSN(whole_intensities))
+whole_intensities_log=data.frame(log2(whole_intensities))
+```
+
+
+```{r}
+#create vectors to split groups
+pre_MCIT=c(paste('X',dput(scan(text="
+3A
+5A
+6A
+7A
+13A
+16A
+19A
+21A
+22A
+26A
+27A",what="")),sep=""))
+pre_SIT=c(paste('X',dput(scan(text="
+1A
+4A
+8A
+10A
+11A
+15A
+17A
+18A
+20A
+23A
+24A
+25A",what="")),sep=""))
+MCIT=c(paste('X',dput(scan(text="
+3B
+5B
+6B
+7B
+13B
+16B
+19B
+21B
+22B
+26B
+27B",what = "")),sep=""))
+SIT=c(paste('X',dput(scan(text="
+1B
+4B
+8B
+10B
+11B
+15B
+17B
+18B
+20B
+23B
+24B
+25B",what="")),sep=""))
+```
+
+
+
+```{r}
+#create factors
+pre_SIT=which(colnames(whole_intensities_VSN) %in% c(pre_SIT))
+pre_MCIT=which(colnames(whole_intensities_VSN)%in% c(pre_MCIT))
+SIT=which(colnames(whole_intensities_VSN) %in% c(SIT))
+MCIT=which(colnames(whole_intensities_VSN) %in% c(MCIT))
+```
+
+```{r}
+#create group factors
+factor.group=vector("character",length(c(pre_MCIT,pre_SIT,SIT,MCIT)))
+factor.group[pre_SIT]="PRE_SIT"
+factor.group[pre_MCIT]="PRE_MCIT"
+factor.group[SIT]="POST_SIT"
+factor.group[MCIT]="POST_MCIT"
+factor.group=factor(factor.group)
+```
+
+```{r}
+#create replicate factors
+factor.replicate=mito_intensities%>%colnames(.)%>%gsub("A|B.*","",.)
+factor.replicate=factor(factor.replicate)
+```
+
+```{r}
+#create design matrix
+design<- model.matrix(~0+factor.group+factor.replicate)
+colnames(design)=gsub('.*\\.', '', colnames(design))
+```
+
+
+
+```{r}
+#Create fit objects using limma and DEqMS
+fit<-limma::lmFit(whole_intensities_VSN,design)
+contrast.matrix <- makeContrasts(SIT= groupPOST_SIT-groupPRE_SIT, High_volume=groupPOST_MCIT-groupPRE_MCIT,levels=design)
+fit_2<- eBayes(contrasts.fit(fit, contrast.matrix))
+fit_2$count=javi_data[rownames(fit_2$coefficients),"peptide_count"]
+fit_3=spectraCounteBayes(fit_2)
+```
+
+```{r}
+#Create output result object containing DE data for un(mito)-normalized intensities of mito proteins
+DeQMS.results_unnormalized_SIT=outputResult(fit_3,coef_col = 1)
+DEqMS.results_unnormalized_MCIT=outputResult(fit_3,coef_col = 2)
+```
+
+```{r}
+#Create Standard error of mean objects
+SEM_SIT=data.frame(sqrt(fit_3$sca.postvar)*fit_3$stdev.unscaled[,1])
+SEM_MCIT=data.frame(sqrt(fit_3$sca.postvar)*fit_3$stdev.unscaled[,2])
+```
+
+
+```{r}
+#Add protein names and standard error of means to SIT result dataframe 
+DeQMS.results_unnormalized_SIT$Uniprot=javi_data[rownames(DeQMS.results_unnormalized_SIT),"PG.ProteinGroups"]
+DeQMS.results_unnormalized_SIT$SEM=SEM_SIT[rownames(DeQMS.results_unnormalized_SIT),1]
+DeQMS.results_unnormalized_SIT_mito=DeQMS.results_unnormalized_SIT%>%separate_rows(Uniprot,sep = ";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(gene,.keep_all = T)
+```
+
+```{r}
+#Add gene names to output result by merging based on protein names
+DeQMS.results_unnormalized_SIT_mito=left_join(DeQMS.results_unnormalized_SIT_mito,Mito_Gene_to_UniProt[,c(1,2)],by="Uniprot")
+DeQMS.results_unnormalized_SIT_mito=DeQMS.results_unnormalized_SIT_mito%>%select(Uniprot,Gene,logFC:SEM,-gene,-count)
+```
+
+
+```{r}
+#Add protein names and standard error of means to SIT result dataframe 
+DEqMS.results_unnormalized_MCIT$Uniprot=javi_data[rownames(DEqMS.results_unnormalized_MCIT),"PG.ProteinGroups"]
+DEqMS.results_unnormalized_MCIT$SEM=SEM_MCIT[rownames(DEqMS.results_unnormalized_MCIT),1]
+DEqMS.results_unnormalized_MCIT_mito=DEqMS.results_unnormalized_MCIT%>%separate_rows(Uniprot,sep = ";")%>%filter(Uniprot %in% Mito_Gene_to_UniProt$Uniprot)%>%distinct(gene,.keep_all = T)
+```
+
+```{r}
+#Add gene names to output result by merging based on protein names
+DEqMS.results_unnormalized_MCIT_mito=left_join(DEqMS.results_unnormalized_MCIT_mito,Mito_Gene_to_UniProt[,c(1,2)],by="Uniprot")
+DEqMS.results_unnormalized_MCIT_mito=DEqMS.results_unnormalized_MCIT_mito%>%select(Uniprot,Gene,logFC:SEM,-gene,-count)
+```
+
+```{r}
+#Create fit objects for mito-normalized data
+fit<-limma::lmFit(mito_intensities_VSN,design)
+contrast.matrix <- makeContrasts(SIT= groupPOST_SIT-groupPRE_SIT, MCIT=groupPOST_MCIT-groupPRE_MCIT,levels=design)
+fit_2<- eBayes(contrasts.fit(fit, contrast.matrix))
+fit_2$count=javi_data[rownames(fit_2$coefficients),"peptide_count"]
+fit_3=spectraCounteBayes(fit_2)
+```
+
+```{r}
+#Create results from fit objects
+DEqMS.results_normalized_SIT= outputResult(fit_3,coef_col = 1)
+DEqMS.results_normalized_MCIT=outputResult(fit_3,coef_col = 2)
+```
+
+```{r}
+#calculate SEM for mito-normalized results
+SEM_SIT=data.frame(sqrt(fit_3$sca.postvar)*fit_3$stdev.unscaled[,1])
+SEM_MCIT=data.frame(sqrt(fit_3$sca.postvar)*fit_3$stdev.unscaled[,2])
+```
+
+
+```{r}
+#ADd protein names and SEMs to mito-normalized SIT output results
+DEqMS.results_normalized_SIT$Uniprot=javi_data[rownames(DEqMS.results_normalized_SIT),"PG.ProteinGroups"]
+DEqMS.results_normalized_SIT=merge(DEqMS.results_normalized_SIT,SEM_SIT,by = "row.names")
+DEqMS.results_normalized_SIT=DEqMS.results_normalized_SIT%>%separate_rows(Uniprot,sep = ";")%>%distinct(gene,.keep_all = T)
+DEqMS.results_normalized_SIT=left_join(DEqMS.results_normalized_SIT,Mito_Gene_to_UniProt[,c(1,2)],by = "Uniprot")
+DEqMS.results_normalized_SIT=DEqMS.results_normalized_SIT%>%select(Gene,Uniprot,logFC:sqrt.fit_3.sca.postvar....fit_3.stdev.unscaled...1.)
+DEqMS.results_normalized_SIT=DEqMS.results_normalized_SIT%>%select(-c(gene,count,Row.names))
+DEqMS.results_normalized_SIT=DEqMS.results_normalized_SIT%>%rename("SEM"=12)
+```
+
+```{r}
+#ADd protein names and SEMs to mito-normalized MCIT output results
+DEqMS.results_normalized_MCIT$Uniprot=javi_data[rownames(DEqMS.results_normalized_MCIT),"PG.ProteinGroups"]
+DEqMS.results_normalized_MCIT=merge(DEqMS.results_normalized_MCIT,SEM_MCIT,by = "row.names")
+DEqMS.results_normalized_MCIT=DEqMS.results_normalized_MCIT%>%separate_rows(Uniprot,sep = ";")%>%distinct(gene,.keep_all = T)
+DEqMS.results_normalized_MCIT=left_join(DEqMS.results_normalized_MCIT,Mito_Gene_to_UniProt[,c(1,2)],by = "Uniprot")
+DEqMS.results_normalized_MCIT=DEqMS.results_normalized_MCIT%>%select(-c(gene,count,Row.names))
+DEqMS.results_normalized_MCIT=DEqMS.results_normalized_MCIT%>%select(Gene,Uniprot,logFC:sqrt.fit_3.sca.postvar....fit_3.stdev.unscaled...2.)
+DEqMS.results_normalized_MCIT=DEqMS.results_normalized_MCIT%>%rename("SEM"=12)
+```

@@ -1,0 +1,323 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+
+
+```{r}
+#load libraries
+library(readxl)
+library(impute)
+library(vsn)
+library(limma)
+library(purrr)
+library(ggplot2)
+library(ggfortify)
+library(reshape)
+library(heatmaply)
+library(DEqMS)
+library(STRINGdb)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(ReactomePA)
+library(EnhancedVolcano)
+```
+
+```{r}
+library(dplyr)
+library(tidyverse)
+```
+
+```{r}
+background_map_Uniprot=mapIds(org.Hs.eg.db,keys = unique(Mito_Gene_to_Uniprot$Uniprot),column = "ENTREZID",keytype = "UNIPROT")%>%enframe()%>%drop_na()
+background_map_Uniprot=background_map_Uniprot%>%rename("ENTREZID"=2)
+background_map_Uniprot=background_map_Uniprot%>%distinct(ENTREZID,.keep_all = T)
+```
+
+```{r}
+only_meta_sig=setdiff(meta_sig_FiveOrMore$ENSEMBL,df_sig$ENSEMBL)
+only_meta_sig_df=meta_analysis_table_ENSEMBL%>%filter(ENSEMBL %in% only_meta_sig)
+```
+
+
+```{r}
+meta_sig_ENTREZ=mapIds(org.Hs.eg.db,keys=unlist(meta_sig_FiveOrMore$ENSEMBL),keytype ="ENSEMBL",column="ENTREZID")
+```
+
+```{r}
+fc_list=meta_sig_FiveOrMore$LogFC
+names(fc_list)=meta_sig_FiveOrMore$ENSEMBL
+```
+
+```{r}
+meta_Reactome_k10=enrichPathway(meta_sig_ENTREZ,readable=T,organism = 'human',pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+png(filename = 'Meta Reactome Cnetplot_new.png',width = 7,height = 7,units = 'in',res = 600)
+cnetplot(meta_Reactome,foldChange=fc_list,showCategory = c("Pyruvate metabolism and Citric Acid (TCA) cycle","Mitochondrial biogenesis","Respiratory electron transport","Mitochondrial Fatty Acid Beta-Oxidation","Branched-chain amino acid catabolism","Cristae formation"),cex.params=list(category_label=.5,gene_label=.4,category_node=.7),layout='kk')
+dev.off()
+```
+
+```{r}
+png(filename = 'Meta GO_dotplot_final.png',width = 6,height = 6,units = 'in',res = 600)
+dotplot(meta_GO_ALL_simp,showCategory = c("tricarboxylic acid cycle","oxidative phosphorylation","mitochondrial respiratory chain complex I assembly","fatty acid oxidation","mitochondrial respiratory chain complex assembly","mitochondrial respiratory chain complex IV","proton-transporting ATP synthase complex","mitochondrial respiratory chain complex I","branched-chain amino acid catabolic process"),font.size=8)
+dev.off()
+```
+
+```{r}
+meta_GO_ALL=enrichGO(meta_sig_ENTREZ,readable = T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID,ont='ALL')
+meta_GO_ALL_simp=clusterProfiler::simplify(meta_GO_ALL,cutoff=0.85)
+```
+
+```{r}
+meta_GO_BP=enrichGO(meta_sig_ENTREZ,readable = T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID,ont='BP')
+meta_GO_BP_simp=clusterProfiler::simplify(meta_GO_BP,cutoff=0.85)
+```
+
+```{r}
+meta_GO_MF=enrichGO(meta_sig_ENTREZ,readable = T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID,ont='MF')
+meta_GO_MF_simp=clusterProfiler::simplify(meta_GO_MF,cutoff=0.85)
+```
+
+```{r}
+# sig_more_than_one=unlist(df_sig%>%filter(Degree>=2)%>%select(ENSEMBL))
+# sig_more_than_one_ENTREZ=mapIds(x=org.Hs.eg.db,keys=sig_more_than_one,keytype = 'ENSEMBL',column='ENTREZID')
+```
+
+```{r}
+sig_more_than_two=unlist(df_sig%>%filter(Degree>2)%>%select(ENSEMBL))
+sig_more_than_two_ENTREZ=mapIds(x=org.Hs.eg.db,keys=sig_more_than_two,keytype = 'ENSEMBL',column='ENTREZID')
+```
+
+```{r}
+sig_at_least_once=df_sig$ENSEMBL
+sig_at_least_once_ENTREZ=mapIds(x=org.Hs.eg.db,keys = sig_at_least_once,keytype = 'ENSEMBL',column = 'ENTREZID')
+```
+
+
+```{r}
+#very_low_het_proteins=unlist(meta_FiveOrMore%>%filter(`Heterogenity Score (I^2)`<=10)%>%select(ENSEMBL))
+```
+
+```{r}
+#high_het_proteins=unlist(meta_FiveOrMore%>%filter(`Heterogenity Score (I^2)`>=75)%>%select(ENSEMBL))
+```
+
+```{r}
+high_het_proteins_ENTREZ=unlist(meta_FiveOrMore%>%dplyr::filter(`Heterogenity Score (I^2)`>=75)%>%dplyr::select(ENTREZ))
+```
+
+```{r}
+very_low_het_proteins_ENTREZ=unlist(meta_FiveOrMore%>%dplyr::filter(`Heterogenity Score (I^2)`<=10)%>%dplyr::select(ENTREZ))
+```
+
+```{r}
+very_low_het_proteins_Reactome=enrichPathway(very_low_het_proteins_ENTREZ,readable=T,organism = 'human',pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+very_low_het_proteins_GO=enrichGO(very_low_het_proteins_ENTREZ,readable = T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID,ont='ALL')
+##this is good!
+```
+
+```{r}
+very_low_het_proteins_GO_BP=enrichGO(very_low_het_proteins_ENTREZ,readable = T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID,ont='BP')
+very_low_het_proteins_GO_BP=simplify(very_low_het_proteins_GO_BP)
+```
+
+
+```{r}
+high_het_proteins_GO=enrichGO(high_het_proteins_ENTREZ,readable = T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID,ont='ALL')
+high_het_proteins_GO_simplify=simplify(high_het_proteins_GO)
+```
+
+
+```{r}
+high_het_proteins_Reactome=enrichPathway(high_het_proteins_ENTREZ,readable=T,organism = 'human',pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+png('./very_low_het_proteins_Cnetplot.png',width = 6,height = 6,units = 'in',res = 600)
+cnetplot(very_low_het_proteins_GO_BP,showCategory=10,cex.params=list(category_label=.5,gene_label=.5,category_node=.7),foldChange=low_het_fc)
+dev.off()
+```
+
+```{r}
+png('high_het_Reactome_Cnetplot.png',width = 6,height = 6,units = 'in',res = 600)
+cnetplot(high_het_proteins_Reactome,cex.params=list(category_label=.5,gene_label=.5,category_node=.7),foldChange=high_het_fc)
+dev.off()
+```
+
+```{r}
+png('high_het_GOBP_dotplot.png',width = 6,height = 6,units = 'in',res = 600)
+dotplot(high_het_proteins_GO_simplify,showCategory=c("oxidative phosphorylation","mitochondrial respiratory chain complex I assembly","electron transfer activity","NADH dehydrogenase activity","respirasome","transmembrane transporter complex","respiratory chain complex"),font.size=8)
+dev.off()
+```
+
+```{r}
+png('high_het_proteins_Cnetplot.png',width = 6,height = 6,units = 'in',res = 600)
+cnetplot(high_het_proteins_GO_simplify,showCategory=c("oxidative phosphorylation","mitochondrial respiratory chain complex I assembly","electron transfer activity","NADH dehydrogenase activity","respirasome","transmembrane transporter complex","respiratory chain complex"),cex.params=list(category_label=.5,gene_label=.5,category_node=.7))
+dev.off()
+```
+
+```{r}
+strongly_present_proteins_ENTREZ=mapIds(x=org.Hs.eg.db,keys = strongly_present_proteins,keytype = 'ENSEMBL',column = 'ENTREZID')
+```
+
+```{r}
+weakly_present_proteins_ENTREZ=mapIds(x=org.Hs.eg.db,keys = weakly_present_proteins,keytype = 'ENSEMBL',column = 'ENTREZID')
+```
+
+```{r}
+# only_DIA_idenitifed_proteins_ENTREZ=mapIds(x=org.Hs.eg.db,keys = only_DIA_idenitifed_proteins,keytype = 'SYMBOL',column = 'ENTREZID')
+```
+
+```{r}
+unique_DIA_entrez=mapIds(x=org.Hs.eg.db,keys=Unique_DIA,keytype = 'ENSEMBL',column = 'ENTREZID')
+```
+
+
+```{r}
+strongly_present_GO_CC=enrichGO(strongly_present_proteins_ENTREZ,ont='CC',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+#strongly_present_GO_CC=clusterProfiler::simplify(strongly_present_GO_CC)
+```
+
+```{r}
+sig_more_than_one_CC=enrichGO(sig_more_than_one_ENTREZ,ont='CC',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map$ENTREZID)
+```
+
+```{r}
+sig_more_than_one_BP=enrichGO(sig_more_than_one_ENTREZ,ont='BP',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+sig_more_than_two_Reactome_k10=enrichPathway(sig_more_than_two_ENTREZ,readable=T,organism = 'human',pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+png('HeatPlot Reactome sig more than two.png',width = 6,height = 6,units = 'in',res = 500)
+heatplot(sig_more_than_two_Reactome_k10,showCategory = c('Pyruvate metabolism and Citric Acid (TCA) cycle','Respiratory electron transport','Complex I biogenesis','Protein localization'),symbol='dot')
+dev.off()
+```
+
+
+```{r}
+sig_at_least_once_Reactome_k10=enrichPathway(sig_at_least_once_ENTREZ,readable=T,organism = 'human',pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+sig_at_least_once_BP=enrichGO(sig_at_least_once_ENTREZ,ont='BP',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+sig_at_least_once_BP_simp=simplify(sig_at_least_once_BP,cutoff=0.85)
+```
+
+```{r}
+png('CnetPlot BP sig at least once.png',width = 6,height = 6,units = 'in',res = 600)
+cnetplot(sig_at_least_once_BP_simp,showCategory=c('respiratory electron transport chain','tricarboxylic acid cycle','NADH dehydrogenase complex assembly','fatty acid beta-oxidation','branched-chain amino acid metabolic process'),cex.params=list(category_label=.5,gene_label=.5,category_node=.7),layout='kk',color.params=list(gene='red'))
+dev.off()
+```
+
+
+```{r}
+sig_more_than_two_BP=enrichGO(sig_more_than_two_ENTREZ,ont='BP',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+#sig_more_than_two_BP=simplify(sig_more_than_two_BP)
+```
+
+```{r}
+cnetplot(sig_at_least_once_Reactome_k10,showCategory=c('Pyruvate metabolism and Citric Acid (TCA) cycle','Respiratory electron transport','Complex I biogenesis','Branched-chain amino acid catabolism'))
+```
+
+```{r}
+png('CnetPlot sig_more_than_two_Reactome.png',width = 6,height = 6,units = 'in',res = 600)
+cnetplot(sig_more_than_two_Reactome,showCategory=c('Pyruvate metabolism and Citric Acid (TCA) cycle','Respiratory electron transport','Complex I biogenesis','Protein localization','Mitochondrial protein import'),cex.params=list(category_label=.5,gene_label=.5,category_node=.7),layout='kk',color.params=list(gene='red'))
+dev.off()
+```
+
+
+```{r}
+only_DIA_idenitifed_proteins_GO_CC=enrichGO(unique_DIA_entrez,ont='CC',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+
+```{r}
+png('Barplot_high_intersection_proteins.png',width = 4,height = 4,units = 'in',res = 500)
+barplot(strongly_present_GO_CC,font.size=8,showCategory=c('inner mitochondrial membrane protein complex','oxidoreductase complex','mitochondrial respirasome','mitochondrial respiratory chain complex I','mitochondrial respiratory chain complex IV','cytochrome complex','proton-transporting ATP synthase complex'),title= 
+'High intersection proteins')+theme(axis.title = element_text(size=8))
+dev.off()
+```
+
+
+```{r}
+weakly_present_GO_CC=enrichGO(weakly_present_proteins_ENTREZ,ont='CC',readable=T,OrgDb=org.Hs.eg.db,pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+#example Enrichpathway function
+Unique_DIA_Reactome=enrichPathway(Unique_DIA_Entrez,readable=T,organism = 'human',pvalueCutoff=0.05,minGSSize=20,maxGSSize=200,universe=background_map_Uniprot$ENTREZID)
+```
+
+```{r}
+Unique_DIA_GO_noSig=enrichGO(unique_DIA_entrez,readable=T,ont='CC',pvalueCutoff =0.5, universe = background_map$ENTREZID,OrgDb=org.Hs.eg.db,qvalueCutoff = .5)
+```
+
+```{r}
+Unique_DIA_GO_noSig=enrichGO(unique_DIA_entrez,readable=T,ont='BP',pvalueCutoff =0.5, universe = background_map$ENTREZID,OrgDb=org.Hs.eg.db,qvalueCutoff = .5)
+```
+
+```{r}
+groupGO_only_DIA=groupGO(unique_DIA_entrez,OrgDb = org.Hs.eg.db,ont='CC',level = 4,readable = T)
+groupGO_only_DIA=clusterProfiler::simplify(groupGO_only_DIA)
+```
+
+```{r}
+groupGO_only_DIA@result=groupGO_only_DIA@result%>%filter(Count>0)%>%arrange(desc(Count))
+```
+
+```{r}
+barplot(groupGO_only_DIA,showCategory=c('mitochondrion','membrane protein complex
+',''))
+```
+
+
+```{r}
+barplot(Unique_DIA_GO_noSig,font.size=10,showcategory=10,title='Top GO:BP terms')+theme_bw()
+```
+
+```{r}
+png('high-intersection significant proteins.png',width = 8,height = 8,units = 'in',res = 700)
+cnetplot(sig_more_than_two_Reactome,showCategory=10,cex.params=list(category_label=.5,gene_label=.5,category_node=.7))
+dev.off()
+```
+
+```{r}
+#emapplot(pairwise_termsim(sig_more_than_two_Reactome),showCategory=5)
+```
+
+```{r}
+test_pathview<- pathview(gene.data=fc_list, pathway.id="00020", species = "hsa", gene.idtype=gene.idtype.list[3],map.symbol = T,kegg.dir = "KEGG pathway images",gene.annotpkg = "org.Hs.eg.db",same.layer=F)
+```
+
+```{r}
+test_pathview_OXPHOS<- pathview(gene.data=fc_list, pathway.id="00190", species = "hsa", gene.idtype=gene.idtype.list[3],map.symbol = T,kegg.dir = "KEGG pathway images",gene.annotpkg = "org.Hs.eg.db",same.layer=F)
+```
+
+```{r}
+test_pathview_FAO<- pathview(gene.data=fc_list, pathway.id="00071", species = "hsa", gene.idtype=gene.idtype.list[3],map.symbol = T,kegg.dir = "KEGG pathway images",gene.annotpkg = "org.Hs.eg.db",same.layer=F)
+```
+

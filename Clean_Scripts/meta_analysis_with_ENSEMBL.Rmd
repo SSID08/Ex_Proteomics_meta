@@ -1,0 +1,272 @@
+---
+title: "Meta_analysis_with_ENSEMBL"
+author: "Siddharth"
+date: '2023-05-10'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(EnsDb.Hsapiens.v86)
+```
+
+```{r}
+#load libraries
+library(readxl)
+library(metafor)
+library(metaviz)
+library(ggplot2)
+```
+```{r}
+library(dplyr)
+library(tidyverse)
+```
+
+```{r}
+#load datasets; previous attempt
+#NVT_Granata=data.frame(readRDS("../Granata_analysis/NVT_Granata_with_DEqMS_unnormalized"))
+# HVT_Granata=data.frame(readRDS("../Granata_analysis/HVT_Granata_with_DeqMS_unnormalized"))
+# Deshmukh_2021=data.frame(readRDS("../Deshmukh_2021_analysis/Deshmukh_unnormalized_mito"))
+# Hostrup_2021=data.frame(readRDS("../Hostrup_2021_analysis/Hostrup_DEQMS_unnorm"))
+# Javi_MCIT=data.frame(readRDS("../Javi analysis/Javi_MCIT_unnorm_with_DeQMS(updated)"))
+# Javi_SIT=data.frame(readRDS("../Javi analysis/Javi_SIT_unnorm_with_DeQMS(updated)"))
+# Schild_2015=data.frame(readRDS("../Schild_analysis/DeQMS_Schild_unnormalized_mito"))
+# Popov_2020=data.frame(readRDS("../Popov analysis/DEqMS_Popov_unnorm"))
+```
+
+```{r}
+#load datasets
+NVT_Granata=data.frame(readRDS("../Granata_new_test/Granata_NVT_unnorm_final_result"))
+HVT_Granata=data.frame(readRDS("../Granata_new_test/Granata_HVT_unnorm_final_result"))
+Deshmukh_2021=data.frame(readRDS("../Deshmukh_2021_analysis/DeqMS_Deshmukh_unnorm_final"))
+Hostrup_2021=data.frame(readRDS("../Hostrup_2021_analysis/Hostrup_unnorm_final"))
+Javi_MCIT=data.frame(readRDS("../Javi analysis/Javi_MCIT_unnorm_with_DeQMS(updated)"))
+Javi_SIT=data.frame(readRDS("../Javi analysis/Javi_SIT_unnorm_with_DeQMS(updated)"))
+Schild_2015=data.frame(readRDS("../Schild_analysis/Schild_unnorm_final"))
+Popov_2020=data.frame(readRDS("../Popov analysis/DEqMS_Popov_unnorm_final"))
+```
+
+```{r}
+# Deshmukh_2021=Deshmukh_2021%>%rename_('Uniprot'='Protein_IDs')
+```
+
+```{r}
+Mito_Gene_to_Uniprot=readxl::read_xlsx("../Gene_to_Uniprot.xlsx")
+Mito_Gene_to_Uniprot=Mito_Gene_to_Uniprot%>%dplyr::rename("Uniprot"="Entry","Gene"="From")
+Mito_Gene_to_Uniprot=Mito_Gene_to_Uniprot%>%select(Gene,Uniprot)
+```
+
+```{r}
+Uniprot_to_Ensembl=read.table('../Meta_analysis_code/uniprot-download_true_format_tsv-2023.05.10-18.37.11.99.tsv',header = T)
+#Uniprot_to_Ensembl=Uniprot_to_Ensembl%>%dplyr::select(From,Entry)
+Uniprot_to_Ensembl=Uniprot_to_Ensembl%>%rename('ENSEMBL'=2)
+Uniprot_to_Ensembl=Uniprot_to_Ensembl%>%rename('Uniprot'='From')
+Uniprot_to_Ensembl=Uniprot_to_Ensembl%>%separate(col = 'ENSEMBL',sep = '\\.',into=c('ENSEMBL',NA))
+Uniprot_to_Ensembl=Uniprot_to_Ensembl%>%distinct(Uniprot,.keep_all = T)
+```
+
+```{r}
+all_uniprot=Reduce(function(x,y) union(x,y), list(NVT_Granata$Uniprot, HVT_Granata$Uniprot, Deshmukh_2021$Uniprot,Hostrup_2021$Uniprot,Javi_MCIT$Uniprot,Javi_SIT$Uniprot,Schild_2015$Uniprot,Popov_2020$Uniprot))
+```
+
+
+```{r}
+NVT_Granata=NVT_Granata%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+HVT_Granata=HVT_Granata%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+Deshmukh_2021=Deshmukh_2021%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+Hostrup_2021=Hostrup_2021%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+Schild_2015=Schild_2015%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+Javi_MCIT=Javi_MCIT%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+Javi_SIT=Javi_SIT%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+Popov_2020=Popov_2020%>%merge(Uniprot_to_Ensembl,by='Uniprot')
+```
+
+
+```{r}
+# consensus_Uniprot=mapIds(org.Hs.eg.db, keys=unique(Uniprot_to_Ensembl$ENSEMBL), keytype="ENSEMBL", column="UNIPROT")
+# consensus_Uniprot=consensus_Uniprot%>%enframe()
+# ```
+# 
+# ```{r}
+# NVT_Granata=NVT_Granata%>%base::merge(consensus_Uniprot,by.x='ENSEMBL',by.y='name')
+# HVT_Granata=HVT_Granata%>%base::merge(consensus_Uniprot,by.x='ENSEMBL',by.y='name')%>%rename_('Consensus_Uniprot'='value')
+# Deshmukh_2021=Deshmukh_2021%>%base::merge(consensus_Uniprot,by.x='ENSEMBL',by.y='name')%>%rename_('Consensus_Uniprot'='value')
+# Hostrup_2021=Hostrup_2021%>%base::merge(consensus_Uniprot,by.x='ENSEMBL',by.y='name')%>%rename_('Consensus_Uniprot'='value')
+```
+
+```{r}
+#Hostrup_2021=Hostrup_2021[-49,]
+#Hostrup_2021=Hostrup_2021[-108,]
+Hostrup_2021=Hostrup_2021[-c(49,108,90,409),]
+Deshmukh_2021=Deshmukh_2021[-24,]
+Schild_2015=Schild_2015[-181,]
+```
+
+```{r}
+summary_meta_ENSEMBL=Reduce(function(x,y) merge(x = x, y = y, by = "ENSEMBL",all=TRUE), list(NVT_Granata, HVT_Granata, Deshmukh_2021,Hostrup_2021,Javi_MCIT,Javi_SIT,Schild_2015,Popov_2020))
+```
+
+
+```{r}
+#summary_meta=summary_meta[-c(410),]
+participant_num_ENSEMBL=matrix(rep(x = c(10,10,5,8,10,11,5,7),each=nrow(summary_meta_ENSEMBL)),nrow = nrow(summary_meta_ENSEMBL))
+colnames(participant_num_ENSEMBL)<-c("num_NVT","num_HVT","num_Deshmukh","num_Hostrup","num_Javi_MCIT","num_Javi_SIT","num_Schild","num_Popov")
+summary_meta_ENSEMBL<-cbind(summary_meta_ENSEMBL,participant_num_ENSEMBL)
+rownames(summary_meta_ENSEMBL)=summary_meta_ENSEMBL$ENSEMBL
+summary_meta_ENSEMBL=summary_meta_ENSEMBL[,-1]
+```
+
+```{r}
+```
+
+
+```{r}
+meta_analysis_table_ENSEMBL=data.frame()
+for (protein_id in rownames(summary_meta_ENSEMBL)){
+  selected_protein=summary_meta_ENSEMBL[protein_id,]
+  selected_protein_table=data.frame(t(selected_protein[grepl('logFC|median' ,colnames(selected_protein))]),t(selected_protein[grepl('SEM' ,colnames(selected_protein))]),t(selected_protein[grepl("sca.P.Value",colnames(selected_protein))]),t(selected_protein[grepl("sca.adj.pval",colnames(selected_protein),ignore.case = T)]),t(selected_protein[grepl("num",colnames(selected_protein))]))
+colnames(selected_protein_table)<-c('Mean_logFC',"SE_logFC","p_value","adj.p_value","num_participants")
+rownames(selected_protein_table)=c("Granata_NVT","Granata_HVT","Deshmukh_2021","Hostrup_2021","Javi_MCIT","Javi_SIT","Schild_2015","Popov_2020")
+  meta=suppressWarnings(rma(yi=Mean_logFC,sei = SE_logFC,ni=num_participants,method="REML",measure = "ROM",slab = rownames(selected_protein_table),data=selected_protein_table,control=list(stepadj=0.5,maxiter=1000)))
+  meta_analysis_table_ENSEMBL=rbind(meta_analysis_table_ENSEMBL,c(meta$beta,meta$ci.lb,meta$ci.ub,meta$pval,meta$k,sum(meta$ni),meta$I2))}
+```
+
+```{r}
+colnames(meta_analysis_table_ENSEMBL)=c("LogFC","Confidence Interval(lower)","Confidence Interval(Upper)","P-value","Num. Studies","Num. Participants","Heterogenity Score (I^2)")
+```
+
+```{r}
+rownames(meta_analysis_table_ENSEMBL)=rownames(summary_meta_ENSEMBL)
+```
+
+```{r}
+meta_analysis_table_ENSEMBL=meta_analysis_table_ENSEMBL%>%rownames_to_column("ENSEMBL")
+meta_analysis_table_ENSEMBL=meta_analysis_table_ENSEMBL%>%left_join(Uniprot_to_Ensembl,multiple = 'first',by='ENSEMBL')
+#meta_analysis_table_ENSEMBL$Gene=mapIds(org.Hs.eg.db,keys = meta_analysis_table_ENSEMBL$ENSEMBL,column = "SYMBOL",keytype = "ENSEMBL")
+meta_analysis_table_ENSEMBL=meta_analysis_table_ENSEMBL%>%left_join(Mito_Gene_to_Uniprot,multiple = 'first',by='Uniprot')
+#meta_analysis_table_ENSEMBL[778,10]='SOD2'
+#meta_analysis_table_ENSEMBL[778,9]='P04179'
+```
+
+
+```{r}
+meta_analysis_table_ENSEMBL=meta_analysis_table_ENSEMBL[,c("Gene","ENSEMBL","Uniprot","LogFC","Confidence Interval(lower)","Confidence Interval(Upper)","P-value","Heterogenity Score (I^2)","Num. Participants","Num. Studies")]
+```
+
+```{r}
+meta_analysis_table_ENSEMBL$adj.P=p.adjust(meta_analysis_table_ENSEMBL$`P-value`,method = 'BH')
+meta_analysis_table_ENSEMBL=meta_analysis_table_ENSEMBL%>%mutate(sig=ifelse(adj.P<=0.05,'+',''))
+```
+
+
+
+```{r}
+summary_meta_ENSEMBL=summary_meta_ENSEMBL%>%rownames_to_column('Con.ENSEMBL')
+summary_meta_ENSEMBL=summary_meta_ENSEMBL%>%left_join(Uniprot_to_Ensembl,suffix = c('Old','New'),by = join_by('Con.ENSEMBL'=='ENSEMBL'),multiple='first')
+rownames(summary_meta_ENSEMBL)=summary_meta_ENSEMBL$Uniprot
+```
+
+
+```{r}
+meta_analysis_table_fiveorMore_withHetCI=data.frame()
+for (protein_id in meta_FiveOrMore$ENSEMBL){
+  selected_protein=summary_meta_ENSEMBL[protein_id,]
+  selected_protein_table=data.frame(t(selected_protein[grepl('logFC|median' ,colnames(selected_protein))]),t(selected_protein[grepl('_SEM' ,colnames(selected_protein))]),t(selected_protein[grepl("sca.P.Value",colnames(selected_protein))]),t(selected_protein[grepl("sca.adj.pval",colnames(selected_protein),ignore.case = T)]),t(selected_protein[grepl("num",colnames(selected_protein))]))
+colnames(selected_protein_table)<-c('Mean_logFC',"SE_logFC","p_value","adj.p_value","num_participants")
+rownames(selected_protein_table)=c("Granata_NVT","Granata_HVT","Deshmukh_2021","Hostrup_2021","Javi_MCIT","Javi_SIT","Schild_2015","Popov_2020")
+  meta=suppressWarnings(rma(yi=Mean_logFC,sei = SE_logFC,ni=num_participants,method="REML",measure = "ROM",slab = rownames(selected_protein_table),data=selected_protein_table,control=list(stepadj=0.5,maxiter=1000)))
+  var=confint(meta)$random[3,]
+  meta_analysis_table_fiveorMore_withHetCI=rbind(meta_analysis_table_fiveorMore_withHetCI,c(meta$beta,meta$ci.lb,meta$ci.ub,meta$pval,meta$k,sum(meta$ni),meta$I2,var[2],var[3],meta$QEp))}
+```
+
+
+```{r}
+colnames(meta_analysis_table_fiveorMore_withHetCI)=c("LogFC","Confidence Interval(lower)","Confidence Interval(Upper)","P-value","Num. Studies","Num. Participants","Heterogenity Score (I^2)","Het(CI.L)","Het(CI.U)","QE.p")
+```
+
+```{r}
+rownames(meta_analysis_table_fiveorMore_withHetCI)=rownames(meta_FiveOrMore)
+meta_FiveOrMore=cbind(meta_FiveOrMore,meta_analysis_table_fiveorMore_withHetCI%>%dplyr::select(`Het(CI.L)`,`Het(CI.U)`,QE.p))
+meta_FiveOrMore$QE_Padj=p.adjust(meta_FiveOrMore$QE.p,method = 'BH')
+CIplot_df=meta_FiveOrMore%>%mutate(sig=ifelse(QE_Padj<=0.05,'+',''))%>%dplyr::select(`Heterogenity Score (I^2)`,`Het(CI.L)`,`Het(CI.U)`,sig)%>%gather('Bound','value',-`Heterogenity Score (I^2)`,-sig)
+#meta_analysis_table_fiveorMore_withHetCI$Gene=meta_FiveOrMore$Gene
+#meta_analysis_table_fiveorMore_withHetCI$ENSEMBL=meta_FiveOrMore$ENSEMBL
+```
+
+```{r}
+Het_CIplot=ggplot(CIplot_df,mapping=aes(x=`Heterogenity Score (I^2)`,y=value,color=Bound,shape=sig))+geom_point(alpha=.5)+labs(col='CI')+scale_color_manual(labels = c("Lower", "Upper"), values = c("blue", "red"))+scale_shape_manual(values=c(16,8))+theme(axis.title= element_text(size=8),legend.title = element_text(size=6))+xlab('I^2 percentage')+ ylab('CI')+theme_minimal()
+```
+
+```{r}
+ggsave(Het_CIplot,filename = 'CI_of_Het_scores(new).png',device = 'png',width = 5,height = 5,units = 'in',dpi = 320,bg = 'white')
+```
+
+
+```{r}
+plot_forest=function(protein_id){
+  selected_protein=summary_meta_ENSEMBL[protein_id,]
+  selected_protein_table=data.frame(t(selected_protein[grepl('logFC|median' ,colnames(selected_protein))]),t(selected_protein[grepl('_SEM' ,colnames(selected_protein))]),t(selected_protein[grepl("sca.P.Value",colnames(selected_protein))]),t(selected_protein[grepl("sca.adj.pval",colnames(selected_protein),ignore.case = T)]),t(selected_protein[grepl("num",colnames(selected_protein))]))
+colnames(selected_protein_table)<-c('Mean_logFC',"SE_logFC","p_value","adj.p_value","num_participants")
+rownames(selected_protein_table)=c("Granata_NVT","Granata_HVT","Deshmukh_2021","Hostrup_2021","Botella_MCIT","Botella_SIT","Schild_2015","Popov_2020")
+selected_protein_table=selected_protein_table%>%na.omit()
+meta=rma(yi=Mean_logFC,sei =SE_logFC,ni=num_participants,method="REML",measure ="ROM",slab=rownames(selected_protein_table),data=selected_protein_table)
+  table_data=data.frame(Study=row.names(selected_protein_table),mean=c(format(round(selected_protein_table$Mean_logFC,digits = 3))),FDR=c(format(round(selected_protein_table$p_value,digits = 3))),n=format(round(selected_protein_table$num_participants,digits = 2)))
+  table_data[,c(2:4)]=data.frame(lapply(table_data[,c(2:4)],as.numeric))
+  table_data=table_data[!is.na(table_data$mean),]
+  summary.table=data.frame(Title="Summary Effect",mean=format(round(meta$b,3)),FDR=c(format(round(meta$pval,3))),n=format(round(sum(selected_protein_table$num_participants)),3))
+  png(paste(protein_id,'_forestplot','.png',sep=''),width = 10,height = 5,units = 'in',res = 600)
+  print(viz_forest(summary_table = summary.table,study_table = table_data,type = "standard" ,meta,annotate_CI = TRUE,study_labels = table_data$Study,table_headers = c("Study","LogFC","p.value","Num. Participants"),variant = "classic",col='firebrick',text_size =3,summary_col = "steelblue4", table_layout = matrix(c(1, 1, 2, 2, 3), nrow = 1)))
+  dev.off()
+}
+  #dev.off()}
+```
+
+
+```{r}
+#saveRDS(object = meta_analysis_table_ENSEMBL,'Meta_analysis_with_ENSEMBL(updated)')
+```
+
+
+```{r}
+meta_analysis_table_ENSEMBL$ENTREZ=mapIds(org.Hs.eg.db,keys=unlist(meta_analysis_table_ENSEMBL$ENSEMBL),keytype ="ENSEMBL",column="ENTREZID")
+```
+
+```{r}
+meta_sig=meta_analysis_table_ENSEMBL%>%filter(sig=='+')
+meta_sig_FiveOrMore=meta_analysis_table_ENSEMBL%>%filter(sig=='+' & `Num. Studies`>4)
+meta_FiveOrMore=meta_analysis_table_ENSEMBL%>%filter(`Num. Studies`>4)
+meta_mult=meta_analysis_table_ENSEMBL%>%filter(`Num. Studies`>1)
+identified_all=meta_analysis_table_ENSEMBL%>%filter(`Num. Studies`==8)
+```
+
+
+```{r}
+fold_change_histogram=ggplot(meta_FiveOrMore,aes(x=LogFC))+geom_histogram(aes(x = LogFC),alpha=.6,binwidth = .1)+xlim(c(-1,1))+geom_freqpoly(col='red')+xlab('Logged fold change')+ylab('Number of Proteins')+geom_vline(xintercept = 0,linetype='dashed',linewidth=1)+theme_minimal()
+```
+
+```{r}
+ggsave(fold_change_histogram,filename = 'Histogram of fold changes of meta-analysis proteins.png',device = 'png',width = 5,height = 5,units = 'in',dpi = 320,bg = 'white')
+```
